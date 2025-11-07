@@ -1,0 +1,85 @@
+# Configuration file for data preprocessing
+# This file controls the slicing and processing of training and target data
+
+# Data directories (can be overridden by env_setting.sh)
+training_data_dir: "/home/yi260/rds/hpc-work/Download/ERA5/Tmax/6hourly"
+target_data_dir: "/home/yi260/rds/hpc-work/Download/MSWX_V100/Past/Tmax/Daily"
+output_dir: "/home/yi260/rds/hpc-work/downscale/Data/Processed"
+
+# Training data configuration (e.g., ERA5)
+training:
+  # File pattern to match NetCDF files
+  file_pattern: "*.nc"
+  
+  # Variable name in NetCDF file (leave null to load all variables)
+  # Common names: t2m, t2m_max, tmax, air_temperature
+  variable_name: null
+  
+  # Spatial bounds (latitude, longitude)
+  # Format: [min, max] or null for no slicing
+  # Example for UK region:
+  lat_bounds: [49.0, 61.0]    # UK latitude range
+  lon_bounds: [-11.0, 2.0]    # UK longitude range
+  
+  # Temporal bounds
+  # Format: "YYYY-MM-DD" or null for no slicing
+  time_start: "2000-01-01"
+  time_end: "2020-12-31"
+  
+  # Output filename (without extension)
+  output_name: "training_era5_tmax"
+  
+  # Save format: 'npz' (compressed numpy) or 'zarr'
+  # npz: Good for datasets that fit in memory, simple to use
+  # zarr: Better for very large datasets, supports lazy loading
+  save_format: "npz"
+
+# Target data configuration (e.g., MSWX, observations)
+target:
+  # File pattern to match NetCDF files
+  file_pattern: "*.nc"
+  
+  # Variable name in NetCDF file
+  variable_name: null
+  
+  # Spatial bounds (should match training data for downscaling)
+  lat_bounds: [49.0, 61.0]
+  lon_bounds: [-11.0, 2.0]
+  
+  # Temporal bounds (should overlap with training data)
+  time_start: "2000-01-01"
+  time_end: "2020-12-31"
+  
+  # Output filename (without extension)
+  output_name: "target_mswx_tmax"
+  
+  # Save format
+  save_format: "npz"
+
+# Processing options
+processing:
+  # Chunk size for time dimension (affects memory usage)
+  time_chunk_size: 100
+  
+  # Parallel processing
+  use_parallel: true
+  
+  # Compression level (for zarr format, 0-9, higher = more compression)
+  compression_level: 5
+
+# Data quality checks
+quality_checks:
+  # Check for NaN values
+  check_nan: true
+  
+  # Check for infinite values
+  check_inf: true
+  
+  # Check for reasonable value ranges (temperature in Kelvin)
+  # Set to null to disable
+  min_valid_value: 150.0  # ~-123°C
+  max_valid_value: 350.0  # ~77°C
+  
+  # Action on quality check failure: 'warn' or 'error'
+  on_failure: "warn"
+
