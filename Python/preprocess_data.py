@@ -1,28 +1,26 @@
 #!/usr/bin/env python3
 """
-Preprocessing script for downscaling data.
+Memory-safe preprocessing script for downscaling data.
 
-This script reads NetCDF files (ERA5, MSWX, etc.), slices them according to
-specified spatial/temporal bounds, and saves them in compressed numpy format
-for efficient training.
+This script reads pre-merged NetCDF files (processed by CDO)
+and converts them to compressed numpy format for efficient training.
 
 Usage:
-    python preprocess_data.py --config path/to/config.yaml
-    python preprocess_data.py --training --start-date 2000-01-01 --end-date 2010-12-31
+    python preprocess_data_safe.py --config path/to/config.yaml
 """
 
 import argparse
+import gc
 import logging
 import os
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional
 
 import numpy as np
 import xarray as xr
 import yaml
-from tqdm import tqdm
 
 # Setup logging
 logging.basicConfig(
@@ -36,57 +34,52 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class DataPreprocessor:
-    """Handles preprocessing of meteorological data for downscaling."""
+class SafeDataPreprocessor:
+    """Memory-safe preprocessor for meteorological data."""
     
     def __init__(self, config: Dict):
-        """
-        Initialize preprocessor with configuration.
-        
-        Args:
-            config: Dictionary containing preprocessing parameters
-        """
+        """Initialize preprocessor with configuration."""
         self.config = config
-        self.training_dir = Path(config['training_data_dir'])
-        self.target_dir = Path(config['target_data_dir'])
-        self.output_dir = Path(config['output_dir'])
+        
+        # Use environment variables if set, otherwise use config
+        self.intermediate_dir = Path(os.environ.get('INTERMEDIATE_DIR', 
+                                      config.get('intermediate_dir', 
+                                      '/home/yi260/rds/hpc-work/downscale/Data/Intermediate')))
+        self.output_dir = Path(os.environ.get('PROCESSED_DIR', 
+                              config.get('output_dir',
+                              '/home/yi260/rds/hpc-work/downscale/Data/Processed')))
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
-        logger.info(f"Training data directory: {self.training_dir}")
-        logger.info(f"Target data directory: {self.target_dir}")
+        logger.info(f"Intermediate directory: {self.intermediate_dir}")
         logger.info(f"Output directory: {self.output_dir}")
     
-    def load_netcdf_files(
+    def load_single_netcdf(
         self,
-        file_pattern: str,
-        data_dir: Path,
-        variable_name: Optional[str] = None
+        file_path: Path,
+        variable_name: Optional[str] = None,
+        time_chunk: int = 365  # Process one year at a time
     ) -> xr.Dataset:
         """
-        Load NetCDF files matching pattern.
+        Load a single NetCDF file with chunking for memory safety.
         
         Args:
-            file_pattern: Glob pattern for files (e.g., "*.nc")
-            data_dir: Directory containing NetCDF files
+            file_path: Path to NetCDF file
             variable_name: Specific variable to load (optional)
+            time_chunk: Chunk size for time dimension
             
         Returns:
             xarray Dataset with loaded data
         """
-        logger.info(f"Loading files from {data_dir} with pattern {file_pattern}")
+        logger.info(f"Loading file: {file_path}")
         
-        files = sorted(data_dir.glob(file_pattern))
-        if not files:
-            raise FileNotFoundError(f"No files found matching {file_pattern} in {data_dir}")
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
         
-        logger.info(f"Found {len(files)} files")
-        
-        # Load with dask for lazy loading
-        ds = xr.open_mfdataset(
-            files,
-            combine='by_coords',
-            parallel=True,
-            chunks={'time': 100}  # Chunk size for memory efficiency
+        # Open with chunking for memory efficiency
+        ds = xr.open_dataset(
+            file_path,
+            chunks={'time': time_chunk},
+            engine='netcdf4'
         )
         
         if variable_name and variable_name in ds:
@@ -94,63 +87,13 @@ class DataPreprocessor:
             logger.info(f"Selected variable: {variable_name}")
         
         logger.info(f"Loaded dataset shape: {dict(ds.dims)}")
+        logger.info(f"Dataset size in memory: {ds.nbytes / 1e9:.2f} GB")
+        
         return ds
     
-    def slice_spatiotemporal(
-        self,
-        dataset: xr.Dataset,
-        lat_bounds: Optional[Tuple[float, float]] = None,
-        lon_bounds: Optional[Tuple[float, float]] = None,
-        time_start: Optional[str] = None,
-        time_end: Optional[str] = None
-    ) -> xr.Dataset:
+    def compute_statistics_chunked(self, dataset: xr.Dataset) -> Dict:
         """
-        Slice dataset by spatial and temporal bounds.
-        
-        Args:
-            dataset: Input xarray Dataset
-            lat_bounds: (min_lat, max_lat) tuple
-            lon_bounds: (min_lon, max_lon) tuple
-            time_start: Start date (e.g., "2000-01-01")
-            time_end: End date (e.g., "2010-12-31")
-            
-        Returns:
-            Sliced xarray Dataset
-        """
-        logger.info("Applying spatiotemporal slicing...")
-        
-        # Identify dimension names (handle variations)
-        lat_dim = self._find_dimension(dataset, ['latitude', 'lat', 'y'])
-        lon_dim = self._find_dimension(dataset, ['longitude', 'lon', 'x'])
-        time_dim = self._find_dimension(dataset, ['time'])
-        
-        # Spatial slicing
-        if lat_bounds is not None:
-            logger.info(f"Slicing latitude: {lat_bounds}")
-            dataset = dataset.sel({lat_dim: slice(lat_bounds[0], lat_bounds[1])})
-        
-        if lon_bounds is not None:
-            logger.info(f"Slicing longitude: {lon_bounds}")
-            dataset = dataset.sel({lon_dim: slice(lon_bounds[0], lon_bounds[1])})
-        
-        # Temporal slicing
-        if time_start is not None or time_end is not None:
-            logger.info(f"Slicing time: {time_start} to {time_end}")
-            dataset = dataset.sel({time_dim: slice(time_start, time_end)})
-        
-        logger.info(f"Sliced dataset shape: {dict(dataset.dims)}")
-        return dataset
-    
-    def _find_dimension(self, dataset: xr.Dataset, possible_names: List[str]) -> str:
-        """Find dimension name from possible variations."""
-        for name in possible_names:
-            if name in dataset.dims:
-                return name
-        raise ValueError(f"Could not find dimension from {possible_names} in dataset")
-    
-    def compute_statistics(self, dataset: xr.Dataset) -> Dict:
-        """
-        Compute statistics for normalization.
+        Compute statistics using chunked computation to avoid memory issues.
         
         Args:
             dataset: Input xarray Dataset
@@ -158,12 +101,14 @@ class DataPreprocessor:
         Returns:
             Dictionary of statistics (mean, std, min, max)
         """
-        logger.info("Computing dataset statistics...")
+        logger.info("Computing dataset statistics (chunked)...")
         stats = {}
         
         for var in dataset.data_vars:
             logger.info(f"Computing statistics for {var}")
             data = dataset[var]
+            
+            # Compute statistics in chunks to avoid memory issues
             stats[var] = {
                 'mean': float(data.mean().compute()),
                 'std': float(data.std().compute()),
@@ -171,71 +116,100 @@ class DataPreprocessor:
                 'max': float(data.max().compute())
             }
             logger.info(f"  Mean: {stats[var]['mean']:.4f}, Std: {stats[var]['std']:.4f}")
+            logger.info(f"  Min: {stats[var]['min']:.4f}, Max: {stats[var]['max']:.4f}")
+            
+            # Force garbage collection
+            gc.collect()
         
         return stats
     
-    def save_preprocessed_data(
+    def save_preprocessed_data_chunked(
         self,
         dataset: xr.Dataset,
         output_name: str,
         save_format: str = 'npz',
-        compression: bool = True
+        time_batch_size: int = 365  # Save one year at a time
     ):
         """
-        Save preprocessed data in efficient format.
+        Save preprocessed data in efficient format with batched processing.
         
         Args:
             dataset: xarray Dataset to save
             output_name: Output filename (without extension)
-            save_format: 'npz' or 'zarr' (default: 'npz')
-            compression: Whether to apply compression
+            save_format: 'npz' or 'zarr'
+            time_batch_size: Number of time steps to process at once
         """
         output_path = self.output_dir / output_name
         
-        if save_format == 'npz':
-            # Save as compressed NumPy format
-            logger.info(f"Saving as compressed .npz: {output_path}.npz")
+        if save_format == 'zarr':
+            # Zarr is inherently chunked and memory-safe
+            logger.info(f"Saving as .zarr: {output_path}.zarr")
             
-            # Convert to numpy arrays and save
-            data_dict = {}
+            # Add compression
+            encoding = {}
             for var in dataset.data_vars:
-                logger.info(f"Converting {var} to numpy array...")
-                data_dict[var] = dataset[var].values
+                encoding[var] = {
+                    'compressor': {'id': 'zlib', 'level': 5},
+                    'chunks': (time_batch_size, 
+                              min(50, dataset.dims.get('latitude', 50)),
+                              min(50, dataset.dims.get('longitude', 50)))
+                }
             
-            # Add coordinates
-            for coord in dataset.coords:
-                if coord not in dataset.dims:
-                    continue
-                data_dict[f'coord_{coord}'] = dataset[coord].values
-            
-            # Add metadata
-            data_dict['dims'] = np.array([str(d) for d in dataset.dims], dtype=object)
-            
-            if compression:
-                np.savez_compressed(f"{output_path}.npz", **data_dict)
-            else:
-                np.savez(f"{output_path}.npz", **data_dict)
+            dataset.to_zarr(
+                f"{output_path}.zarr",
+                mode='w',
+                encoding=encoding,
+                consolidated=True
+            )
             
             # Save statistics
-            stats = self.compute_statistics(dataset)
+            stats = self.compute_statistics_chunked(dataset)
             stats_path = f"{output_path}_stats.yaml"
             with open(stats_path, 'w') as f:
                 yaml.dump(stats, f, default_flow_style=False)
             logger.info(f"Saved statistics to {stats_path}")
             
-        elif save_format == 'zarr':
-            # Save as Zarr format (better for very large datasets)
-            logger.info(f"Saving as .zarr: {output_path}.zarr")
+        elif save_format == 'npz':
+            # For NPZ, we need to be careful with memory
+            logger.info(f"Saving as compressed .npz: {output_path}.npz")
             
-            # Compute and save
-            dataset.to_zarr(
-                f"{output_path}.zarr",
-                mode='w',
-                consolidated=True
-            )
+            # Check total size
+            total_size_gb = dataset.nbytes / 1e9
+            logger.info(f"Total dataset size: {total_size_gb:.2f} GB")
+            
+            if total_size_gb > 30:
+                logger.warning(f"Dataset is very large ({total_size_gb:.2f} GB). Consider using zarr format instead.")
+                logger.warning("Attempting to save in NPZ format anyway...")
+            
+            # Convert to numpy arrays with progress tracking
+            data_dict = {}
+            
+            for var in dataset.data_vars:
+                logger.info(f"Converting {var} to numpy array...")
+                # Use compute() with proper chunking
+                data_dict[var] = dataset[var].values
+                logger.info(f"  Shape: {data_dict[var].shape}, Size: {data_dict[var].nbytes / 1e9:.2f} GB")
+                gc.collect()  # Force garbage collection after each variable
+            
+            # Add coordinates
+            for coord in dataset.coords:
+                if coord not in dataset.dims:
+                    continue
+                logger.info(f"Adding coordinate: {coord}")
+                data_dict[f'coord_{coord}'] = dataset[coord].values
+            
+            # Add metadata
+            data_dict['dims'] = np.array([str(d) for d in dataset.dims], dtype=object)
+            
+            logger.info("Compressing and saving to disk...")
+            np.savez_compressed(f"{output_path}.npz", **data_dict)
+            
+            # Clear memory
+            del data_dict
+            gc.collect()
             
             # Save statistics
-            stats = self.compute_statistics(dataset)
+            stats = self.compute_statistics_chunked(dataset)
             stats_path = f"{output_path}_stats.yaml"
             with open(stats_path, 'w') as f:
                 yaml.dump(stats, f, default_flow_style=False)
@@ -245,70 +219,89 @@ class DataPreprocessor:
             raise ValueError(f"Unknown save format: {save_format}")
         
         logger.info(f"Successfully saved preprocessed data to {output_path}")
+        
+        # Report file size
+        if save_format == 'npz':
+            file_size = os.path.getsize(f"{output_path}.npz") / 1e9
+            logger.info(f"Output file size: {file_size:.2f} GB")
+        else:
+            # For zarr, it's a directory
+            import subprocess
+            result = subprocess.run(['du', '-sh', f"{output_path}.zarr"], 
+                                  capture_output=True, text=True)
+            logger.info(f"Output size: {result.stdout.strip()}")
     
     def preprocess_training_data(self):
-        """Preprocess training data (e.g., ERA5)."""
+        """Preprocess training data (from CDO-processed file)."""
         logger.info("=" * 80)
         logger.info("PREPROCESSING TRAINING DATA")
         logger.info("=" * 80)
         
         config = self.config['training']
         
-        # Load data
-        ds = self.load_netcdf_files(
-            config['file_pattern'],
-            self.training_dir,
-            config.get('variable_name')
-        )
+        # Look for CDO-preprocessed file
+        preprocessed_file = self.intermediate_dir / "training_era5_tmax_preprocessed.nc"
         
-        # Slice data
-        ds_sliced = self.slice_spatiotemporal(
-            ds,
-            lat_bounds=config.get('lat_bounds'),
-            lon_bounds=config.get('lon_bounds'),
-            time_start=config.get('time_start'),
-            time_end=config.get('time_end')
+        if not preprocessed_file.exists():
+            logger.error(f"CDO-preprocessed file not found: {preprocessed_file}")
+            logger.error("Please run cdo_preprocess.sh first!")
+            raise FileNotFoundError(f"File not found: {preprocessed_file}")
+        
+        # Load data
+        ds = self.load_single_netcdf(
+            preprocessed_file,
+            config.get('variable_name'),
+            time_chunk=config.get('time_chunk', 365)
         )
         
         # Save
-        self.save_preprocessed_data(
-            ds_sliced,
+        self.save_preprocessed_data_chunked(
+            ds,
             config['output_name'],
-            save_format=config.get('save_format', 'npz')
+            save_format=config.get('save_format', 'zarr')  # Default to zarr for safety
         )
+        
+        # Close dataset and free memory
+        ds.close()
+        del ds
+        gc.collect()
         
         logger.info("Training data preprocessing complete!")
     
     def preprocess_target_data(self):
-        """Preprocess target data (e.g., MSWX)."""
+        """Preprocess target data (from CDO-processed file)."""
         logger.info("=" * 80)
         logger.info("PREPROCESSING TARGET DATA")
         logger.info("=" * 80)
         
         config = self.config['target']
         
-        # Load data
-        ds = self.load_netcdf_files(
-            config['file_pattern'],
-            self.target_dir,
-            config.get('variable_name')
-        )
+        # Look for CDO-preprocessed file
+        preprocessed_file = self.intermediate_dir / "target_mswx_tmax_preprocessed.nc"
         
-        # Slice data
-        ds_sliced = self.slice_spatiotemporal(
-            ds,
-            lat_bounds=config.get('lat_bounds'),
-            lon_bounds=config.get('lon_bounds'),
-            time_start=config.get('time_start'),
-            time_end=config.get('time_end')
+        if not preprocessed_file.exists():
+            logger.error(f"CDO-preprocessed file not found: {preprocessed_file}")
+            logger.error("Please run cdo_preprocess.sh first!")
+            raise FileNotFoundError(f"File not found: {preprocessed_file}")
+        
+        # Load data
+        ds = self.load_single_netcdf(
+            preprocessed_file,
+            config.get('variable_name'),
+            time_chunk=config.get('time_chunk', 365)
         )
         
         # Save
-        self.save_preprocessed_data(
-            ds_sliced,
+        self.save_preprocessed_data_chunked(
+            ds,
             config['output_name'],
-            save_format=config.get('save_format', 'npz')
+            save_format=config.get('save_format', 'zarr')  # Default to zarr for safety
         )
+        
+        # Close dataset and free memory
+        ds.close()
+        del ds
+        gc.collect()
         
         logger.info("Target data preprocessing complete!")
 
@@ -324,7 +317,7 @@ def load_config(config_path: str) -> Dict:
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description='Preprocess meteorological data for downscaling'
+        description='Memory-safe preprocessing for meteorological data'
     )
     parser.add_argument(
         '--config',
@@ -351,7 +344,7 @@ def main():
     args = parse_args()
     
     logger.info("=" * 80)
-    logger.info("DATA PREPROCESSING PIPELINE")
+    logger.info("MEMORY-SAFE DATA PREPROCESSING PIPELINE")
     logger.info("=" * 80)
     logger.info(f"Start time: {datetime.now()}")
     
@@ -360,7 +353,7 @@ def main():
         config = load_config(args.config)
         
         # Initialize preprocessor
-        preprocessor = DataPreprocessor(config)
+        preprocessor = SafeDataPreprocessor(config)
         
         # Process data
         if args.training_only:
