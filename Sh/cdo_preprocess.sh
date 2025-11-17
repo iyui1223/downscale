@@ -8,7 +8,7 @@
 #   - This avoids creating huge intermediate files that exceed memory limits
 #
 # Configuration:
-#   1. To enable spatial subsetting: Set apply_spatial_subset="true" in process_dataset()
+#   1. To enable spatial subsetting: Set apply_spatial_subset="true"
 #   2. To process full spatial domain: Set apply_spatial_subset="false"
 #   3. Spatial bounds (when enabled) are defined by LAT_MIN, LAT_MAX, LON_MIN, LON_MAX
 #
@@ -19,6 +19,24 @@
 
 # Don't exit immediately on error - we want better error messages
 set -o pipefail
+
+################################################################################
+# editables
+################################################################################
+
+# Enable spatial subsetting for large datasets to reduce memory usage
+apply_spatial_subset="true"  # Set to "false" to process full spatial domain
+
+# Spatial bounds (UK region)
+LAT_MIN=49.0
+LAT_MAX=61.0
+LON_MIN=-11.0
+LON_MAX=2.0
+
+# Temporal bounds
+TIME_START="2000-01-01"
+TIME_END="2020-12-31"
+
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,33 +49,14 @@ else
     exit 1
 fi
 
-# Load CDO module (so this script is self-contained)
+# Load CDO module
 echo "Loading CDO module..."
 module load cdo/2.0.5 2>/dev/null || module load cdo 2>/dev/null || echo "Warning: CDO module not found, assuming CDO is in PATH"
 
-# Verify CDO is available
-if command -v cdo &> /dev/null; then
-    echo "✓ CDO found: $(command -v cdo)"
-    echo "  Version: $(cdo --version 2>&1 | head -1)"
-else
-    echo "ERROR: CDO not found in PATH"
-    echo "Please ensure CDO module is available on your system"
-    exit 1
-fi
 echo ""
 
 # Use paths from env_setting.sh
 OUTPUT_DIR="${INTERMEDIATE_DIR}"
-
-# Spatial bounds (UK region)
-LAT_MIN=49.0
-LAT_MAX=61.0
-LON_MIN=-11.0
-LON_MAX=2.0
-
-# Temporal bounds
-TIME_START="2000-01-01"
-TIME_END="2020-12-31"
 
 # Processing parameters
 MAX_FILES_PER_BATCH=100  # Adjust based on system limits
@@ -358,8 +357,7 @@ process_dataset() {
     
     # Step 1: Merge files (with optional spatial subset during batch processing)
     echo "Step 1: Merging all files..."
-    # Enable spatial subsetting for large datasets to reduce memory usage
-    local apply_spatial_subset="true"  # Set to "false" to process full spatial domain
+    
     if [ "$apply_spatial_subset" = "true" ]; then
         echo "  (Spatial subset will be applied during batch processing for efficiency)"
     fi
