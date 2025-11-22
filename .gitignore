@@ -1,7 +1,11 @@
 # Ignore all executable, binary and data files
 *.npy
 *.npz
+*.zarr
 *.bin
+*.pkl
+*.h5
+*.hdf5
 Data/
 old/
 tmp/

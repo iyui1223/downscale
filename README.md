@@ -162,37 +162,115 @@ Model hyperparameters will be stored in `Const/model_params/` (to be created) in
 
 ## Usage
 
-### Basic Workflow
+### Quick Start
 
-1. **Activate the Poetry environment (if not already active):**
+1. **Verify installation:**
    ```bash
-   poetry shell
-   ```
-   
-   Or prefix commands with `poetry run`:
-   ```bash
-   poetry run python Python/your_script.py
+   poetry run python Python/test_setup.py
    ```
 
-2. **Prepare your data:**
-   - Training data: Coarse-resolution reanalysis (e.g., ERA5)
-   - Target data: High-resolution observations or analyses (e.g., MSWX)
-   - Ensure data is in NetCDF format
+2. **Configure preprocessing:**
+   Edit `Const/preprocess_config.yaml` to set your data paths and parameters
 
-3. **Run training:**
+3. **Submit preprocessing job:**
    ```bash
    cd Sh/
-   ./train_model.sh
+   ./submit_preprocess.sh
    ```
 
-4. **Run prediction/downscaling:**
+4. **Train model (coming soon):**
    ```bash
    cd Sh/
-   ./predict.sh
+   ./submit_training.sh
    ```
 
-5. **Evaluate results:**
-   Results and metrics will be saved to the `Models/` and `Log/` directories.
+5. **Run predictions (coming soon):**
+   ```bash
+   cd Sh/
+   ./submit_prediction.sh
+   ```
+
+### Detailed Workflow
+
+#### Step 1: Activate Environment
+
+Activate the Poetry environment:
+```bash
+poetry shell
+```
+
+Or prefix commands with `poetry run`:
+```bash
+poetry run python Python/your_script.py
+```
+
+#### Step 2: Data Preprocessing
+
+**Purpose:** Convert NetCDF files to efficient compressed format and slice data
+
+**Configure:** Edit `Const/preprocess_config.yaml`:
+```yaml
+# Set your data paths
+training_data_dir: "/path/to/ERA5/data"
+target_data_dir: "/path/to/MSWX/data"
+
+# Set spatial bounds (e.g., UK region)
+training:
+  lat_bounds: [49.0, 61.0]
+  lon_bounds: [-11.0, 2.0]
+  time_start: "2000-01-01"
+  time_end: "2020-12-31"
+```
+
+**Run preprocessing:**
+```bash
+cd Sh/
+./submit_preprocess.sh
+```
+
+**Monitor progress:**
+```bash
+# Check job status
+squeue -u $USER
+
+# View output
+tail -f ../Log/preprocess_<JOB_ID>.out
+```
+
+**Output:** Preprocessed data saved to `Data/Processed/`:
+- `training_era5_tmax.npz` - Compressed training data
+- `training_era5_tmax_stats.yaml` - Normalization statistics
+- `target_mswx_tmax.npz` - Compressed target data
+- `target_mswx_tmax_stats.yaml` - Target statistics
+
+#### Step 3: Train Model (Coming Soon)
+
+Train XGBoost model on preprocessed data:
+```bash
+cd Sh/
+./submit_training.sh
+```
+
+Features will include:
+- Automatic feature engineering
+- Hyperparameter tuning with cross-validation
+- Model checkpoint saving
+- Training metrics logging
+
+#### Step 4: Generate Predictions (Coming Soon)
+
+Run downscaling predictions:
+```bash
+cd Sh/
+./submit_prediction.sh
+```
+
+#### Step 5: Evaluate Results (Coming Soon)
+
+Evaluate model performance and generate visualizations:
+```bash
+poetry run python Python/evaluate.py --model Models/best_model.json
+```
 
 ## Data Format
 

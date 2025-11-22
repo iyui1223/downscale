@@ -18,7 +18,7 @@ This preprocessing pipeline uses a **two-stage approach** to safely handle large
                        │
                        ↓
 ┌─────────────────────────────────────────────────────────────┐
-│              preprocess_slurm.sh (MAIN)                      │
+│          F01_preprocess_slurm.sh (MAIN)                      │
 │  - Sources env_setting.sh                                   │
 │  - Loads modules (CDO, etc.)                                │
 │  - Orchestrates both stages                                 │
@@ -47,7 +47,7 @@ This preprocessing pipeline uses a **two-stage approach** to safely handle large
   - `PROCESSED_DIR`: Final Python output location
 
 ### Shell Scripts
-- **`Sh/preprocess_slurm.sh`**: Main SLURM job script
+- **`Sh/F01_preprocess_slurm.sh`**: Main SLURM job script
   - Loads environment and modules
   - Calls both CDO and Python stages
   - Reports timing and status
@@ -71,7 +71,7 @@ This preprocessing pipeline uses a **two-stage approach** to safely handle large
 
 ```bash
 cd /home/yi260/rds/hpc-work/downscale/Sh
-sbatch preprocess_slurm.sh
+sbatch F01_preprocess_slurm.sh
 ```
 
 That's it! The script will:
@@ -144,7 +144,7 @@ training:
 
 ### Adjust Memory/Time
 
-Edit SLURM parameters in `Sh/preprocess_slurm.sh`:
+Edit SLURM parameters in `Sh/F01_preprocess_slurm.sh`:
 ```bash
 #SBATCH --mem=64G        # Increase for larger datasets
 #SBATCH --time=06:00:00  # Increase for more files
@@ -179,7 +179,7 @@ module avail cdo
 module load cdo/<version>
 ```
 
-Or edit `Sh/preprocess_slurm.sh` to use the correct module name.
+Or edit `Sh/F01_preprocess_slurm.sh` to use the correct module name.
 
 ### Insufficient memory
 Increase SLURM memory allocation:

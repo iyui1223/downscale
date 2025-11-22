@@ -37,7 +37,6 @@ LON_MAX=2.0
 TIME_START="2000-01-01"
 TIME_END="2020-12-31"
 
-
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

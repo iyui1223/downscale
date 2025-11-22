@@ -21,5 +21,5 @@ ln -rsf ${TARGET_DATA_DIR} ${ROOT_DIR}/Data/Target
 
 # for poetry access
 source ~/venvs/c1coursework/bin/activate
-
+# Note: Use 'poetry run python3' in scripts, or 'poetry shell' for interactive use
 
