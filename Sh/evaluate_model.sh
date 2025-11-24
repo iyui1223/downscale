@@ -1,47 +1,51 @@
 #!/bin/bash
 ################################################################################
-# XGBoost Evaluation Script
+# Downscaling Model Evaluation Script
 #
-# This script evaluates XGBoost downscaling predictions:
+# This script evaluates downscaling model predictions (model-agnostic):
 #   1. Creates a Work directory for analysis
 #   2. Links input files (predictions and ground truth)
 #   3. Computes evaluation metrics and creates visualizations
 #   4. Moves outputs to long-term storage
 #
-# NOTE: This script is designed to be called from inference_xgboost.sh
-#       and inherits its environment (ROOT_DIR, PROCESSED_DIR, etc.)
+# NOTE: This script is designed to be called from inference_*.sh scripts
+#       or F03_inference_evaluate_slurm.sh and inherits environment variables
+#       (ROOT_DIR, PROCESSED_DIR, MODEL_NAME, etc.)
 #
 # Usage:
-#   Called by: inference_xgboost.sh (automatic, default behavior)
+#   bash Sh/evaluate_model.sh --predictions FILENAME [OPTIONS]
 #
 # Options:
 #   --predictions FILENAME   Predictions file (required)
 #   --ground-truth FILENAME  Ground truth file (default: target_mswx_tmax.npz)
 #   --output-name NAME       Output name base (default: evaluation)
+#   --model-name NAME        Model name for output organization (required)
 #
 # Requirements:
-#   - Must be called from inference_xgboost.sh (or similar script that sets ROOT_DIR)
 #   - Downscaled predictions file
 #   - Ground truth MSWX data
+#   - ROOT_DIR environment variable set
 ################################################################################
 
 set -e  # Exit on error
 set -o pipefail
 
 ################################################################################
-# EDITABLE PARAMETERS
+# NOTE: This script is designed to be called from F03_inference_evaluate_slurm.sh
+#       Parameters are passed via command line arguments or environment variables.
+#       DO NOT edit default parameters here - configure them in F03 instead.
 ################################################################################
-
-# Input files (can be overridden by command line)
-PREDICTIONS_FILE=""                      # Must be specified
-GROUND_TRUTH_FILE="target_mswx_tmax.npz"  # Default ground truth
-
-# Output configuration
-OUTPUT_NAME="evaluation"                  # Base name for output files
 
 ################################################################################
 # Parse command line arguments
 ################################################################################
+
+# Initialize from environment variables (set by F03 wrapper)
+PREDICTIONS_FILE="${PREDICTIONS_FILE:-}"
+GROUND_TRUTH_FILE="${GROUND_TRUTH_FILE:-target_mswx_tmax.npz}"
+ERA5_INPUT_FILE="${ERA5_INPUT_FILE:-training_era5_tmax.npz}"
+OUTPUT_NAME="${OUTPUT_NAME:-evaluation}"
+MODEL_NAME="${MODEL_NAME:-xgboost_downscale_tmax}"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -55,6 +59,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --output-name)
             OUTPUT_NAME="$2"
+            shift 2
+            ;;
+        --model-name)
+            MODEL_NAME="$2"
+            shift 2
+            ;;
+        --era5-input)
+            ERA5_INPUT_FILE="$2"
             shift 2
             ;;
         --help)
@@ -72,7 +84,13 @@ done
 # Validate required arguments
 if [ -z "$PREDICTIONS_FILE" ]; then
     echo "ERROR: --predictions argument is required"
-    echo "Usage: bash Sh/evaluate_xgboost.sh --predictions FILENAME"
+    echo "Usage: bash Sh/evaluate_model.sh --predictions FILENAME --model-name MODEL_NAME"
+    exit 1
+fi
+
+if [ -z "$MODEL_NAME" ]; then
+    echo "ERROR: --model-name argument is required"
+    echo "Usage: bash Sh/evaluate_model.sh --predictions FILENAME --model-name MODEL_NAME"
     exit 1
 fi
 
@@ -82,14 +100,14 @@ fi
 
 # Verify environment is set by parent script
 if [ -z "${ROOT_DIR}" ]; then
-    echo "ERROR: This script must be called from inference_xgboost.sh"
-    echo "ROOT_DIR environment variable is not set."
+    echo "ERROR: ROOT_DIR environment variable is not set."
+    echo "This script must be called with ROOT_DIR defined, typically from F03 wrapper."
     exit 1
 fi
 
 if [ -z "${PROCESSED_DIR}" ]; then
-    echo "ERROR: This script must be called from inference_xgboost.sh"
-    echo "PROCESSED_DIR environment variable is not set."
+    echo "ERROR: PROCESSED_DIR environment variable is not set."
+    echo "This script must be called with PROCESSED_DIR defined, typically from F03 wrapper."
     exit 1
 fi
 
@@ -101,22 +119,29 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 WORK_DIR="${ROOT_DIR}/Work/evaluate_${TIMESTAMP}"
 mkdir -p "${WORK_DIR}"
 
+# Create model-specific downscaled data directory
+DOWNSCALED_DIR="${ROOT_DIR}/Data/Downscaled/${MODEL_NAME}"
+mkdir -p "${DOWNSCALED_DIR}"
+
 echo "================================================================================"
-echo "XGBoost Downscaling Evaluation"
+echo "Downscaling Model Evaluation"
 echo "================================================================================"
 echo ""
 echo "Configuration:"
 echo "  Root directory:      ${ROOT_DIR}"
 echo "  Work directory:      ${WORK_DIR}"
+echo "  Model name:          ${MODEL_NAME}"
 echo ""
 echo "Input Data:"
-echo "  Predictions:         Data/Processed/${PREDICTIONS_FILE}"
+echo "  Predictions:         Data/Downscaled/${MODEL_NAME}/${PREDICTIONS_FILE}"
 echo "  Ground truth:        Data/Processed/${GROUND_TRUTH_FILE}"
+echo "  ERA5 input:          Data/Processed/${ERA5_INPUT_FILE}"
 echo ""
 echo "Output:"
 echo "  Output name:         ${OUTPUT_NAME}"
-echo "  Metrics file:        Data/Processed/${OUTPUT_NAME}_metrics.yaml"
-echo "  Plots directory:     Data/Processed/${OUTPUT_NAME}_plots/"
+echo "  Downscaled dir:      Data/Downscaled/${MODEL_NAME}/"
+echo "  Metrics file:        ${OUTPUT_NAME}_metrics.yaml"
+echo "  Figures directory:   Figs/F03_inference_evaluate/${MODEL_NAME}/"
 echo ""
 echo "================================================================================"
 echo ""
@@ -127,15 +152,22 @@ echo ""
 
 echo "Validating inputs..."
 
-# Check predictions file
-PRED_PATH="${PROCESSED_DIR}/${PREDICTIONS_FILE}"
+# Check predictions file (first try model-specific directory, then fall back to Processed)
+PRED_PATH="${DOWNSCALED_DIR}/${PREDICTIONS_FILE}"
 if [ ! -f "${PRED_PATH}" ]; then
-    echo "ERROR: Predictions file not found: ${PRED_PATH}"
-    echo "Please run inference first: bash Sh/inference_xgboost.sh"
-    exit 1
+    # Fall back to old location for backward compatibility
+    PRED_PATH="${PROCESSED_DIR}/${PREDICTIONS_FILE}"
+    if [ ! -f "${PRED_PATH}" ]; then
+        echo "ERROR: Predictions file not found in either location:"
+        echo "  - Data/Downscaled/${MODEL_NAME}/${PREDICTIONS_FILE}"
+        echo "  - Data/Processed/${PREDICTIONS_FILE}"
+        echo "Please run inference first"
+        exit 1
+    fi
+    echo "  ⚠ Predictions found in old location: ${PRED_PATH}"
+else
+    echo "  ✓ Predictions found: ${PRED_PATH}"
 fi
-
-echo "  ✓ Predictions found: ${PRED_PATH}"
 
 # Check ground truth file
 TRUTH_PATH="${PROCESSED_DIR}/${GROUND_TRUTH_FILE}"
@@ -155,6 +187,13 @@ echo "Setting up Work directory..."
 
 ln -sf "${PRED_PATH}" "${WORK_DIR}/predictions.npz"
 ln -sf "${TRUTH_PATH}" "${WORK_DIR}/ground_truth.npz"
+
+# Link ERA5 input if it exists
+ERA5_PATH="${PROCESSED_DIR}/${ERA5_INPUT_FILE}"
+if [ -f "${ERA5_PATH}" ]; then
+    ln -sf "${ERA5_PATH}" "${WORK_DIR}/era5_input.npz"
+    echo "  ✓ ERA5 input found: ${ERA5_PATH}"
+fi
 
 mkdir -p "${WORK_DIR}/output"
 
@@ -204,9 +243,15 @@ echo ""
 START_TIME=$(date +%s)
 
 # Run Python evaluation script
-poetry run python3 "${ROOT_DIR}/Python/evaluate_xgboost.py" \
+ERA5_ARG=""
+if [ -f "${WORK_DIR}/era5_input.npz" ]; then
+    ERA5_ARG="--era5-input ${WORK_DIR}/era5_input.npz"
+fi
+
+poetry run python3 "${ROOT_DIR}/Python/evaluate_model.py" \
     --predictions "${WORK_DIR}/predictions.npz" \
     --ground-truth "${WORK_DIR}/ground_truth.npz" \
+    ${ERA5_ARG} \
     --output-dir "${WORK_DIR}/output" \
     --output-name "${OUTPUT_NAME}"
 
@@ -237,21 +282,21 @@ echo ""
 
 echo "Moving outputs to long-term storage..."
 
-# Create plots directory
-PLOTS_DIR="${PROCESSED_DIR}/${OUTPUT_NAME}_plots"
-mkdir -p "${PLOTS_DIR}"
+# Create figures directory organized by model
+FIGS_DIR_MODEL="${FIGS_DIR}/F03_inference_evaluate/${MODEL_NAME}"
+mkdir -p "${FIGS_DIR_MODEL}"
 
-# Copy metrics file
-METRICS_FILE="${PROCESSED_DIR}/${OUTPUT_NAME}_metrics.yaml"
+# Copy metrics file to model-specific downscaled directory
+METRICS_FILE="${DOWNSCALED_DIR}/${OUTPUT_NAME}_metrics.yaml"
 cp "${WORK_DIR}/output/${OUTPUT_NAME}_metrics.yaml" "${METRICS_FILE}"
 echo "  ✓ Metrics saved to: ${METRICS_FILE}"
 
-# Copy plots
-cp "${WORK_DIR}/output/"*.png "${PLOTS_DIR}/"
-echo "  ✓ Plots saved to: ${PLOTS_DIR}/"
+# Copy plots to Figs directory
+cp "${WORK_DIR}/output/"*.png "${FIGS_DIR_MODEL}/"
+echo "  ✓ Figures saved to: ${FIGS_DIR_MODEL}/"
 
-# Create evaluation summary
-SUMMARY_FILE="${PROCESSED_DIR}/${OUTPUT_NAME}_summary.txt"
+# Create evaluation summary in model-specific directory
+SUMMARY_FILE="${DOWNSCALED_DIR}/${OUTPUT_NAME}_summary.txt"
 cat > "${SUMMARY_FILE}" << SUMEOF
 Evaluation Summary
 ==================
@@ -266,7 +311,7 @@ Input Files:
 
 Output Files:
   Metrics: ${METRICS_FILE}
-  Plots: ${PLOTS_DIR}/
+  Figures: ${FIGS_DIR_MODEL}/
 
 Metrics:
 --------
@@ -296,8 +341,8 @@ echo ""
 echo "Metrics file:"
 echo "  ${METRICS_FILE}"
 echo ""
-echo "Plots:"
-ls -lh "${PLOTS_DIR}/"
+echo "Figures:"
+ls -lh "${FIGS_DIR_MODEL}/"
 echo ""
 echo "Summary:"
 echo "  ${SUMMARY_FILE}"

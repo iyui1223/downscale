@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-XGBoost Downscaling Evaluation Script
+Downscaling Model Evaluation Script
 
 This script evaluates downscaling predictions against ground truth MSWX data,
-computing metrics and creating visualizations.
+computing metrics and creating visualizations. Works with any downscaling model.
 
 Author: Climate Downscaling Team
 Date: November 2024
@@ -13,7 +13,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional
 
 import numpy as np
 import matplotlib
@@ -21,23 +21,27 @@ matplotlib.use('Agg')  # Use non-interactive backend for HPC
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from scipy.interpolate import RegularGridInterpolator
 import yaml
 
 
-def load_data(predictions_path: str, ground_truth_path: str) -> Tuple:
+def load_data(predictions_path: str, ground_truth_path: str, era5_path: Optional[str] = None) -> Tuple:
     """
-    Load predictions and ground truth data.
+    Load predictions, ground truth, and optionally ERA5 input data.
     
     Args:
         predictions_path: Path to predictions .npz file
         ground_truth_path: Path to ground truth .npz file
+        era5_path: Optional path to ERA5 input .npz file
         
     Returns:
-        Tuple of (predictions, ground_truth, coords)
+        Tuple of (predictions, ground_truth, era5_interp, coords)
     """
     print("Loading data...")
     print(f"  Predictions: {predictions_path}")
     print(f"  Ground truth: {ground_truth_path}")
+    if era5_path:
+        print(f"  ERA5 input: {era5_path}")
     
     # Load predictions
     pred_data = np.load(predictions_path, allow_pickle=True)
@@ -66,16 +70,59 @@ def load_data(predictions_path: str, ground_truth_path: str) -> Tuple:
     
     print("  ✓ Data shapes and coordinates match")
     
-    return predictions, ground_truth, (pred_lat, pred_lon, pred_times)
+    # Load and interpolate ERA5 if provided
+    era5_interp = None
+    if era5_path:
+        print("\n  Interpolating ERA5 to high-resolution grid...")
+        era5_data = np.load(era5_path, allow_pickle=True)
+        era5_temp = era5_data['t2m']  # ERA5 uses 't2m' for temperature
+        era5_lat = era5_data['coord_latitude']
+        era5_lon = era5_data['coord_longitude']
+        era5_times = era5_data['coord_valid_time']
+        
+        print(f"    ERA5 shape: {era5_temp.shape}")
+        print(f"    ERA5 grid: {len(era5_lat)}x{len(era5_lon)}")
+        print(f"    Target grid: {len(pred_lat)}x{len(pred_lon)}")
+        
+        # Verify time alignment
+        if not np.array_equal(era5_times, pred_times):
+            raise ValueError("ERA5 time coordinates do not match predictions!")
+        
+        # Interpolate ERA5 to high-resolution grid
+        era5_interp = np.zeros_like(predictions)
+        for t in range(len(pred_times)):
+            if t % 1000 == 0:
+                print(f"    Interpolating timestep {t}/{len(pred_times)}...")
+            
+            # Create interpolator for this timestep
+            interpolator = RegularGridInterpolator(
+                (era5_lat, era5_lon),
+                era5_temp[t, :, :],
+                method='linear',
+                bounds_error=False,
+                fill_value=None
+            )
+            
+            # Create meshgrid for target coordinates
+            lon_grid, lat_grid = np.meshgrid(pred_lon, pred_lat)
+            points = np.column_stack([lat_grid.ravel(), lon_grid.ravel()])
+            
+            # Interpolate
+            era5_interp[t, :, :] = interpolator(points).reshape(len(pred_lat), len(pred_lon))
+        
+        print(f"  ✓ ERA5 interpolated to high-resolution grid")
+    
+    return predictions, ground_truth, era5_interp, (pred_lat, pred_lon, pred_times)
 
 
-def compute_metrics(predictions: np.ndarray, ground_truth: np.ndarray) -> Dict:
+def compute_metrics(predictions: np.ndarray, ground_truth: np.ndarray, era5_interp: Optional[np.ndarray] = None) -> Dict:
     """
     Compute evaluation metrics.
     
     Args:
         predictions: Predicted values
         ground_truth: Ground truth values
+        era5_interp: Optional interpolated ERA5 input (for difference-based correlation)
         
     Returns:
         Dictionary of metrics
@@ -105,8 +152,34 @@ def compute_metrics(predictions: np.ndarray, ground_truth: np.ndarray) -> Dict:
     mae_90 = np.percentile(np.abs(errors), 90)
     mae_95 = np.percentile(np.abs(errors), 95)
     
-    # Correlation
+    # Correlation - standard (between predictions and ground truth)
     correlation = np.corrcoef(pred_valid, truth_valid)[0, 1]
+    
+    # Difference-based correlation (if ERA5 available)
+    correlation_diff = None
+    if era5_interp is not None:
+        print("\n  Computing difference-based correlation...")
+        print("    Diff1 = Ground Truth - ERA5 (validation improvement)")
+        print("    Diff2 = Predictions - ERA5 (predicted improvement)")
+        
+        era5_flat = era5_interp.ravel()
+        valid_mask_era5 = ~(np.isnan(pred_flat) | np.isnan(truth_flat) | np.isnan(era5_flat))
+        
+        pred_valid_era5 = pred_flat[valid_mask_era5]
+        truth_valid_era5 = truth_flat[valid_mask_era5]
+        era5_valid = era5_flat[valid_mask_era5]
+        
+        # Compute differences
+        diff_truth = truth_valid_era5 - era5_valid  # True improvement from ERA5
+        diff_pred = pred_valid_era5 - era5_valid   # Predicted improvement from ERA5
+        
+        # Correlation of the differences
+        correlation_diff = np.corrcoef(diff_truth, diff_pred)[0, 1]
+        
+        print(f"    Mean true improvement:      {np.mean(diff_truth):.4f} °C")
+        print(f"    Mean predicted improvement: {np.mean(diff_pred):.4f} °C")
+        print(f"    Std true improvement:       {np.std(diff_truth):.4f} °C")
+        print(f"    Std predicted improvement:  {np.std(diff_pred):.4f} °C")
     
     metrics = {
         'rmse': float(rmse),
@@ -121,15 +194,20 @@ def compute_metrics(predictions: np.ndarray, ground_truth: np.ndarray) -> Dict:
         'n_total_samples': int(len(pred_flat))
     }
     
+    if correlation_diff is not None:
+        metrics['correlation_diff'] = float(correlation_diff)
+    
     print("\n  Metrics:")
-    print(f"    RMSE:            {rmse:.4f} °C")
-    print(f"    MAE:             {mae:.4f} °C")
-    print(f"    MAE (median):    {mae_50:.4f} °C")
-    print(f"    MAE (90th):      {mae_90:.4f} °C")
-    print(f"    MAE (95th):      {mae_95:.4f} °C")
-    print(f"    Bias:            {bias:.4f} °C")
-    print(f"    R²:              {r2:.4f}")
-    print(f"    Correlation:     {correlation:.4f}")
+    print(f"    RMSE:                    {rmse:.4f} °C")
+    print(f"    MAE:                     {mae:.4f} °C")
+    print(f"    MAE (median):            {mae_50:.4f} °C")
+    print(f"    MAE (90th):              {mae_90:.4f} °C")
+    print(f"    MAE (95th):              {mae_95:.4f} °C")
+    print(f"    Bias:                    {bias:.4f} °C")
+    print(f"    R²:                      {r2:.4f}")
+    print(f"    Correlation:             {correlation:.4f}")
+    if correlation_diff is not None:
+        print(f"    Correlation (diff-based): {correlation_diff:.4f}")
     
     return metrics
 
@@ -183,7 +261,8 @@ def create_visualizations(predictions: np.ndarray,
                          temporal_rmse: np.ndarray,
                          pred_mean: np.ndarray,
                          truth_mean: np.ndarray,
-                         output_dir: str):
+                         output_dir: str,
+                         era5_interp: Optional[np.ndarray] = None):
     """
     Create evaluation visualizations.
     
@@ -195,6 +274,7 @@ def create_visualizations(predictions: np.ndarray,
         pred_mean: Time-averaged predictions
         truth_mean: Time-averaged ground truth
         output_dir: Output directory for plots
+        era5_interp: Optional interpolated ERA5 input
     """
     print("\nCreating visualizations...")
     
@@ -333,6 +413,151 @@ def create_visualizations(predictions: np.ndarray,
     plt.savefig(os.path.join(output_dir, 'time_series.png'))
     plt.close()
     
+    # 5. Spatial distribution maps for errors and temperatures
+    print("  - Spatial distribution maps...")
+    fig, axes = plt.subplots(2, 3, figsize=(20, 12))
+    
+    extent = [lon.min(), lon.max(), lat.min(), lat.max()]
+    
+    # Temperature distributions
+    im0 = axes[0, 0].imshow(truth_mean, extent=extent, origin='lower', 
+                            cmap='RdYlBu_r', aspect='auto')
+    axes[0, 0].set_title('Ground Truth - Mean Temperature', fontsize=12, fontweight='bold')
+    axes[0, 0].set_xlabel('Longitude')
+    axes[0, 0].set_ylabel('Latitude')
+    plt.colorbar(im0, ax=axes[0, 0], label='Temperature (°C)')
+    
+    im1 = axes[0, 1].imshow(pred_mean, extent=extent, origin='lower',
+                            cmap='RdYlBu_r', aspect='auto')
+    axes[0, 1].set_title('Predictions - Mean Temperature', fontsize=12, fontweight='bold')
+    axes[0, 1].set_xlabel('Longitude')
+    axes[0, 1].set_ylabel('Latitude')
+    plt.colorbar(im1, ax=axes[0, 1], label='Temperature (°C)')
+    
+    # Temperature standard deviation (spatial variability)
+    truth_std = np.nanstd(ground_truth, axis=0)
+    im2 = axes[0, 2].imshow(truth_std, extent=extent, origin='lower',
+                            cmap='YlOrRd', aspect='auto')
+    axes[0, 2].set_title('Ground Truth - Temporal Std Dev', fontsize=12, fontweight='bold')
+    axes[0, 2].set_xlabel('Longitude')
+    axes[0, 2].set_ylabel('Latitude')
+    plt.colorbar(im2, ax=axes[0, 2], label='Std Dev (°C)')
+    
+    # Error distributions
+    bias_map = pred_mean - truth_mean
+    vmax_bias = max(abs(np.nanpercentile(bias_map, 5)), abs(np.nanpercentile(bias_map, 95)))
+    im3 = axes[1, 0].imshow(bias_map, extent=extent, origin='lower',
+                            cmap='RdBu_r', aspect='auto', vmin=-vmax_bias, vmax=vmax_bias)
+    axes[1, 0].set_title('Spatial Bias Map (Pred - Truth)', fontsize=12, fontweight='bold')
+    axes[1, 0].set_xlabel('Longitude')
+    axes[1, 0].set_ylabel('Latitude')
+    plt.colorbar(im3, ax=axes[1, 0], label='Bias (°C)')
+    
+    # Absolute error map
+    abs_error_map = np.nanmean(np.abs(predictions - ground_truth), axis=0)
+    im4 = axes[1, 1].imshow(abs_error_map, extent=extent, origin='lower',
+                            cmap='YlOrRd', aspect='auto')
+    axes[1, 1].set_title('Spatial MAE Map', fontsize=12, fontweight='bold')
+    axes[1, 1].set_xlabel('Longitude')
+    axes[1, 1].set_ylabel('Latitude')
+    plt.colorbar(im4, ax=axes[1, 1], label='MAE (°C)')
+    
+    # RMSE map
+    im5 = axes[1, 2].imshow(temporal_rmse, extent=extent, origin='lower',
+                            cmap='YlOrRd', aspect='auto')
+    axes[1, 2].set_title('Spatial RMSE Map', fontsize=12, fontweight='bold')
+    axes[1, 2].set_xlabel('Longitude')
+    axes[1, 2].set_ylabel('Latitude')
+    plt.colorbar(im5, ax=axes[1, 2], label='RMSE (°C)')
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, 'spatial_distribution_maps.png'))
+    plt.close()
+    
+    # 6. If ERA5 available, create difference-based visualizations
+    if era5_interp is not None:
+        print("  - Difference-based spatial maps...")
+        fig, axes = plt.subplots(2, 3, figsize=(20, 12))
+        
+        era5_mean = np.nanmean(era5_interp, axis=0)
+        
+        # ERA5 mean
+        im0 = axes[0, 0].imshow(era5_mean, extent=extent, origin='lower', 
+                                cmap='RdYlBu_r', aspect='auto')
+        axes[0, 0].set_title('ERA5 (Interpolated) - Mean', fontsize=12, fontweight='bold')
+        axes[0, 0].set_xlabel('Longitude')
+        axes[0, 0].set_ylabel('Latitude')
+        plt.colorbar(im0, ax=axes[0, 0], label='Temperature (°C)')
+        
+        # True improvement (Truth - ERA5)
+        true_improvement = truth_mean - era5_mean
+        vmax_imp = max(abs(np.nanpercentile(true_improvement, 5)), 
+                      abs(np.nanpercentile(true_improvement, 95)))
+        im1 = axes[0, 1].imshow(true_improvement, extent=extent, origin='lower',
+                                cmap='RdBu_r', aspect='auto', vmin=-vmax_imp, vmax=vmax_imp)
+        axes[0, 1].set_title('True Improvement (Truth - ERA5)', fontsize=12, fontweight='bold')
+        axes[0, 1].set_xlabel('Longitude')
+        axes[0, 1].set_ylabel('Latitude')
+        plt.colorbar(im1, ax=axes[0, 1], label='Temperature Diff (°C)')
+        
+        # Predicted improvement (Pred - ERA5)
+        pred_improvement = pred_mean - era5_mean
+        im2 = axes[0, 2].imshow(pred_improvement, extent=extent, origin='lower',
+                                cmap='RdBu_r', aspect='auto', vmin=-vmax_imp, vmax=vmax_imp)
+        axes[0, 2].set_title('Predicted Improvement (Pred - ERA5)', fontsize=12, fontweight='bold')
+        axes[0, 2].set_xlabel('Longitude')
+        axes[0, 2].set_ylabel('Latitude')
+        plt.colorbar(im2, ax=axes[0, 2], label='Temperature Diff (°C)')
+        
+        # Improvement error (Pred improvement - True improvement)
+        improvement_error = pred_improvement - true_improvement
+        vmax_err = max(abs(np.nanpercentile(improvement_error, 5)),
+                      abs(np.nanpercentile(improvement_error, 95)))
+        im3 = axes[1, 0].imshow(improvement_error, extent=extent, origin='lower',
+                                cmap='RdBu_r', aspect='auto', vmin=-vmax_err, vmax=vmax_err)
+        axes[1, 0].set_title('Improvement Error', fontsize=12, fontweight='bold')
+        axes[1, 0].set_xlabel('Longitude')
+        axes[1, 0].set_ylabel('Latitude')
+        plt.colorbar(im3, ax=axes[1, 0], label='Error (°C)')
+        
+        # Temporal correlation of improvements at each grid point
+        print("    Computing spatial correlation of improvements...")
+        correlation_map = np.zeros((len(lat), len(lon)))
+        for i in range(len(lat)):
+            for j in range(len(lon)):
+                true_imp_ts = ground_truth[:, i, j] - era5_interp[:, i, j]
+                pred_imp_ts = predictions[:, i, j] - era5_interp[:, i, j]
+                
+                valid = ~(np.isnan(true_imp_ts) | np.isnan(pred_imp_ts))
+                if np.sum(valid) > 10:  # Need at least 10 valid points
+                    correlation_map[i, j] = np.corrcoef(true_imp_ts[valid], 
+                                                        pred_imp_ts[valid])[0, 1]
+                else:
+                    correlation_map[i, j] = np.nan
+        
+        im4 = axes[1, 1].imshow(correlation_map, extent=extent, origin='lower',
+                                cmap='RdYlGn', aspect='auto', vmin=-1, vmax=1)
+        axes[1, 1].set_title('Temporal Correlation of Improvements', fontsize=12, fontweight='bold')
+        axes[1, 1].set_xlabel('Longitude')
+        axes[1, 1].set_ylabel('Latitude')
+        plt.colorbar(im4, ax=axes[1, 1], label='Correlation')
+        
+        # RMSE of improvements
+        improvement_rmse = np.sqrt(np.nanmean((pred_improvement - true_improvement)**2))
+        axes[1, 2].text(0.5, 0.5, 
+                       f'Improvement RMSE:\n{improvement_rmse:.4f} °C\n\n'
+                       f'Mean True Improvement:\n{np.nanmean(true_improvement):.4f} °C\n\n'
+                       f'Mean Pred Improvement:\n{np.nanmean(pred_improvement):.4f} °C',
+                       ha='center', va='center', fontsize=14,
+                       transform=axes[1, 2].transAxes,
+                       bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+        axes[1, 2].set_title('Improvement Statistics', fontsize=12, fontweight='bold')
+        axes[1, 2].axis('off')
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, 'difference_based_maps.png'))
+        plt.close()
+    
     print(f"  ✓ Visualizations saved to: {output_dir}")
 
 
@@ -357,29 +582,34 @@ def save_metrics(metrics: Dict, spatial_metrics: Dict, output_path: str):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Evaluate XGBoost downscaling predictions')
+    parser = argparse.ArgumentParser(description='Evaluate downscaling model predictions')
     parser.add_argument('--predictions', required=True, help='Path to predictions .npz file')
     parser.add_argument('--ground-truth', required=True, help='Path to ground truth .npz file')
+    parser.add_argument('--era5-input', help='Path to ERA5 input .npz file (for difference-based correlation)')
     parser.add_argument('--output-dir', required=True, help='Output directory for evaluation results')
     parser.add_argument('--output-name', default='evaluation', help='Base name for output files')
     
     args = parser.parse_args()
     
     print("="*80)
-    print("XGBoost Downscaling Evaluation")
+    print("Downscaling Model Evaluation")
     print("="*80)
     print(f"\nConfiguration:")
     print(f"  Predictions: {args.predictions}")
     print(f"  Ground truth: {args.ground_truth}")
+    if args.era5_input:
+        print(f"  ERA5 input: {args.era5_input}")
     print(f"  Output directory: {args.output_dir}")
     print(f"  Output name: {args.output_name}")
     print()
     
     # Load data
-    predictions, ground_truth, coords = load_data(args.predictions, args.ground_truth)
+    predictions, ground_truth, era5_interp, coords = load_data(
+        args.predictions, args.ground_truth, args.era5_input
+    )
     
     # Compute metrics
-    metrics = compute_metrics(predictions, ground_truth)
+    metrics = compute_metrics(predictions, ground_truth, era5_interp)
     spatial_metrics, temporal_rmse, pred_mean, truth_mean = compute_spatial_metrics(
         predictions, ground_truth
     )
@@ -395,7 +625,7 @@ def main():
     create_visualizations(
         predictions, ground_truth, coords,
         temporal_rmse, pred_mean, truth_mean,
-        args.output_dir
+        args.output_dir, era5_interp
     )
     
     print("\n" + "="*80)
