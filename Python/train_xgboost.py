@@ -5,7 +5,6 @@ XGBoost-based Statistical Downscaling Training Script
 This script trains an XGBoost model to downscale ERA5 (low-resolution) to MSWX (high-resolution)
 climate data using statistical downscaling techniques with spatial feature engineering.
 
-Author: Climate Downscaling Team
 Date: November 2024
 """
 

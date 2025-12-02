@@ -41,30 +41,24 @@ set -e  # Exit on error
 set -o pipefail
 
 ################################################################################
-# EDITABLE PARAMETERS
+# NOTE: This script is designed to be called from F03_inference_evaluate_slurm.sh
+#       Parameters are passed via command line arguments or environment variables.
+#       DO NOT edit default parameters here - configure them in F03 instead.
 ################################################################################
-
-# Model configuration
-MODEL_NAME="xgboost_downscale_tmax"
-MODEL_DIR="Models/${MODEL_NAME}"
-
-# Input data (can be overridden by command line arguments)
-ERA5_DATA_FILE="training_era5_tmax.npz"  # Default: use training data for testing
-TARGET_GRID_FILE="target_mswx_tmax.npz"  # Reference for target grid
-
-# Output configuration
-OUTPUT_NAME="downscaled_tmax"            # Base name for output file
-
-# Processing parameters
-CHUNK_SIZE="100"                         # Timesteps to process at once
-
-# Evaluation parameters
-RUN_EVALUATION="true"                    # Run evaluation after inference
-GROUND_TRUTH_FILE="target_mswx_tmax.npz" # Ground truth for evaluation
 
 ################################################################################
 # Parse command line arguments
 ################################################################################
+
+# Initialize from environment variables (set by F03 wrapper)
+MODEL_NAME="${MODEL_NAME:-xgboost_downscale_tmax}"
+MODEL_DIR="Models/${MODEL_NAME}"
+ERA5_DATA_FILE="${ERA5_DATA_FILE:-training_era5_tmax.npz}"
+TARGET_GRID_FILE="${TARGET_GRID_FILE:-target_mswx_tmax.npz}"
+OUTPUT_NAME="${OUTPUT_NAME:-downscaled_tmax}"
+CHUNK_SIZE="${CHUNK_SIZE:-100}"
+RUN_EVALUATION="${RUN_EVALUATION:-true}"
+GROUND_TRUTH_FILE="${GROUND_TRUTH_FILE:-target_mswx_tmax.npz}"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -120,6 +114,10 @@ cd "${ROOT_DIR}"
 export TMPDIR="${ROOT_DIR}/Work/tmp"
 mkdir -p "${TMPDIR}"
 
+# Create model-specific downscaled data directory
+DOWNSCALED_DIR="${ROOT_DIR}/Data/Downscaled/${MODEL_NAME}"
+mkdir -p "${DOWNSCALED_DIR}"
+
 # Create Work directory for this inference run
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 WORK_DIR="${ROOT_DIR}/Work/inference_${TIMESTAMP}"
@@ -140,7 +138,7 @@ echo "  Target grid ref:     Data/Processed/${TARGET_GRID_FILE}"
 echo ""
 echo "Output:"
 echo "  Output name:         ${OUTPUT_NAME}"
-echo "  Output location:     Data/Processed/${OUTPUT_NAME}.npz"
+echo "  Output location:     Data/Downscaled/${MODEL_NAME}/${OUTPUT_NAME}.npz"
 echo ""
 echo "Processing Parameters:"
 echo "  Chunk size:          ${CHUNK_SIZE} timesteps"
@@ -301,14 +299,14 @@ echo ""
 
 echo "Moving outputs to long-term storage..."
 
-# Copy predictions to Data/Processed
-OUTPUT_FINAL="${PROCESSED_DIR}/${OUTPUT_NAME}.npz"
+# Copy predictions to model-specific downscaled directory
+OUTPUT_FINAL="${DOWNSCALED_DIR}/${OUTPUT_NAME}.npz"
 cp "${WORK_DIR}/${OUTPUT_NAME}.npz" "${OUTPUT_FINAL}"
 
 echo "  ✓ Predictions saved to: ${OUTPUT_FINAL}"
 
-# Create inference log
-LOG_FILE="${PROCESSED_DIR}/${OUTPUT_NAME}_inference_log.txt"
+# Create inference log in model-specific directory
+LOG_FILE="${DOWNSCALED_DIR}/${OUTPUT_NAME}_inference_log.txt"
 cat > "${LOG_FILE}" << LOGEOF
 Inference completed: $(date)
 Inference time: ${ELAPSED_MIN}m ${ELAPSED_SEC}s
@@ -372,11 +370,15 @@ if [ "${RUN_EVALUATION}" = "true" ]; then
     echo "================================================================================"
     echo ""
     
+    # Export variables for evaluation script
+    export FIGS_DIR
+    
     # Call evaluation script with same job
-    bash "${ROOT_DIR}/Sh/evaluate_xgboost.sh" \
+    bash "${ROOT_DIR}/Sh/evaluate_model.sh" \
         --predictions "${OUTPUT_NAME}.npz" \
         --ground-truth "${GROUND_TRUTH_FILE}" \
-        --output-name "${OUTPUT_NAME}_eval"
+        --output-name "${OUTPUT_NAME}_eval" \
+        --model-name "${MODEL_NAME}"
     
     EVAL_EXIT_CODE=$?
     
@@ -384,14 +386,14 @@ if [ "${RUN_EVALUATION}" = "true" ]; then
         echo ""
         echo "WARNING: Evaluation failed with exit code ${EVAL_EXIT_CODE}"
         echo "Inference was successful but evaluation encountered an error."
-        echo "You can run evaluation manually: bash Sh/evaluate_xgboost.sh --predictions ${OUTPUT_NAME}.npz"
+        echo "You can run evaluation manually: bash Sh/evaluate_model.sh --predictions ${OUTPUT_NAME}.npz --model-name ${MODEL_NAME}"
     fi
 else
     echo ""
     echo "Skipping evaluation (use --skip-evaluation flag to control this)"
     echo ""
     echo "To evaluate later, run:"
-    echo "  bash Sh/evaluate_xgboost.sh --predictions ${OUTPUT_NAME}.npz"
+    echo "  bash Sh/evaluate_model.sh --predictions ${OUTPUT_NAME}.npz --model-name ${MODEL_NAME}"
 fi
 
 echo ""

@@ -2,24 +2,27 @@
 #SBATCH --job-name=xgb_inference_eval
 #SBATCH --account=cranmer-sl3-cpu
 #SBATCH --partition=sapphire
-#SBATCH --time=00:30:00
+#SBATCH --time=00:20:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
-#SBATCH --mem=64G
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=8G
 #SBATCH --output=../Log/inference_eval.out
 #SBATCH --error=../Log/inference_eval.err
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=yi260@cam.ac.uk
 
 ################################################################################
-# F03: XGBoost Inference and Evaluation Wrapper Script (SLURM)
+# F03: Downscaling Model Inference and Evaluation Wrapper Script (SLURM)
 #
 # This is the main SLURM wrapper script for running inference and evaluation.
 # It provides flexible control over which steps to run:
 #   - Inference only (generate downscaled predictions)
 #   - Evaluation only (evaluate existing predictions)
 #   - Both inference and evaluation (full pipeline)
+#
+# Works with any downscaling model type. Currently supports:
+#   - XGBoost models (via inference_xgboost.sh)
 #
 # Usage:
 #   sbatch Sh/F03_inference_evaluate_slurm.sh
@@ -39,7 +42,7 @@ set -o pipefail
 # ============================================================================
 # STEP CONTROL: Choose which steps to execute
 # ============================================================================
-RUN_INFERENCE="true"     # Set to "true" to run inference, "false" to skip
+RUN_INFERENCE="false"     # Set to "true" to run inference, "false" to skip
 RUN_EVALUATION="true"    # Set to "true" to run evaluation, "false" to skip
 
 # Examples:
@@ -83,7 +86,7 @@ EVAL_OUTPUT_NAME="downscaled_tmax_eval"     # Base name for evaluation outputs
 ################################################################################
 
 echo "================================================================================"
-echo "F03: XGBoost Inference and Evaluation Pipeline"
+echo "F03: Downscaling Model Inference and Evaluation Pipeline"
 echo "================================================================================"
 echo "Job ID:              $SLURM_JOB_ID"
 echo "Job name:            $SLURM_JOB_NAME"
@@ -139,6 +142,15 @@ if [ "${RUN_INFERENCE}" = "true" ]; then
     echo ""
     
     START_TIME_INFERENCE=$(date +%s)
+    
+    # Export inference parameters
+    export MODEL_NAME
+    export ERA5_DATA_FILE
+    export TARGET_GRID_FILE
+    export OUTPUT_NAME
+    export CHUNK_SIZE
+    export GROUND_TRUTH_FILE
+    export RUN_EVALUATION="false"  # We handle evaluation separately in F03
     
     # Run inference script (without evaluation - we'll handle it separately)
     bash Sh/inference_xgboost.sh \
@@ -198,17 +210,30 @@ if [ "${RUN_EVALUATION}" = "true" ]; then
     
     START_TIME_EVAL=$(date +%s)
     
-    # Set environment variables for evaluate script
+    # Export environment variables for evaluate script
     export ROOT_DIR
     export PROCESSED_DIR
     export INTERMEDIATE_DIR
     export TRAINING_DATA_DIR
     export TARGET_DATA_DIR
+    export FIGS_DIR
     
-    # Run evaluation script
-    bash Sh/evaluate_xgboost.sh \
+    # Export evaluation parameters
+    export MODEL_NAME
+    export PREDICTIONS_FILE
+    export GROUND_TRUTH_FILE
+    export ERA5_INPUT_FILE="${ERA5_DATA_FILE}"
+    export OUTPUT_NAME="${EVAL_OUTPUT_NAME}"
+    
+    # Enable memory profiling
+    export MEMORY_PROFILE=1
+    
+    # Run evaluation script (now model-agnostic)
+    bash Sh/evaluate_model.sh \
         --predictions "${PREDICTIONS_FILE}" \
         --ground-truth "${GROUND_TRUTH_FILE}" \
+        --era5-input "${ERA5_DATA_FILE}" \
+        --model-name "${MODEL_NAME}" \
         --output-name "${EVAL_OUTPUT_NAME}"
     
     EVAL_EXIT_CODE=$?
@@ -253,7 +278,7 @@ if [ "${RUN_INFERENCE}" = "true" ]; then
     echo "  Status:        ✓ Completed"
     echo "  Exit code:     ${INFERENCE_EXIT_CODE}"
     echo "  Time:          ${ELAPSED_MIN_INFERENCE}m ${ELAPSED_SEC_INFERENCE}s"
-    echo "  Output:        Data/Processed/${OUTPUT_NAME}.npz"
+    echo "  Output:        Data/Downscaled/${MODEL_NAME}/${OUTPUT_NAME}.npz"
     echo ""
 fi
 
@@ -262,8 +287,9 @@ if [ "${RUN_EVALUATION}" = "true" ]; then
     echo "  Status:        ✓ Completed"
     echo "  Exit code:     ${EVAL_EXIT_CODE}"
     echo "  Time:          ${ELAPSED_MIN_EVAL}m ${ELAPSED_SEC_EVAL}s"
-    echo "  Metrics:       Data/Processed/${EVAL_OUTPUT_NAME}_metrics.yaml"
-    echo "  Plots:         Data/Processed/${EVAL_OUTPUT_NAME}_plots/"
+    echo "  Metrics:       Data/Downscaled/${MODEL_NAME}/${EVAL_OUTPUT_NAME}_metrics.yaml"
+    echo "  Summary:       Data/Downscaled/${MODEL_NAME}/${EVAL_OUTPUT_NAME}_summary.txt"
+    echo "  Figures:       Figs/F03_inference_evaluate/${MODEL_NAME}/"
     echo ""
 fi
 
