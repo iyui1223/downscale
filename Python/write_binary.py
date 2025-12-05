@@ -186,7 +186,8 @@ def interpolate_era5_year(era5_data, year_start, year_end, era5_lat, era5_lon,
 
 
 def process_npz_streaming(npz_path, output_base, varname_in='air_temperature',
-                          era5_path=None, interpolate=False, compute_clim=True):
+                          era5_path=None, interpolate=False, compute_clim=True,
+                          target_grid_path=None):
     """
     Process NPZ file in streaming manner (year-by-year).
     
@@ -197,6 +198,7 @@ def process_npz_streaming(npz_path, output_base, varname_in='air_temperature',
         era5_path: Optional ERA5 file to interpolate from
         interpolate: Whether to interpolate from ERA5
         compute_clim: Whether to compute climatology
+        target_grid_path: Reference file for target grid when interpolating
         
     Returns:
         dict with file paths and metadata
@@ -218,23 +220,44 @@ def process_npz_streaming(npz_path, output_base, varname_in='air_temperature',
     else:
         raise KeyError(f"Could not find time coordinate. Available: {data.files}")
     
-    # Latitude coordinate
-    if 'coord_lat' in data.files:
-        lat = np.array(data['coord_lat'])
-    elif 'coord_latitude' in data.files:
-        lat = np.array(data['coord_latitude'])
+    # Load lat/lon from target grid if specified (for regridding)
+    if target_grid_path and interpolate:
+        print(f"  Using target grid from: {target_grid_path}")
+        target_data = np.load(target_grid_path, mmap_mode='r', allow_pickle=True)
+        
+        # Latitude from target
+        if 'coord_lat' in target_data.files:
+            lat = np.array(target_data['coord_lat'])
+        elif 'coord_latitude' in target_data.files:
+            lat = np.array(target_data['coord_latitude'])
+        else:
+            raise KeyError(f"Could not find latitude in target grid. Available: {target_data.files}")
+        
+        # Longitude from target
+        if 'coord_lon' in target_data.files:
+            lon = np.array(target_data['coord_lon'])
+        elif 'coord_longitude' in target_data.files:
+            lon = np.array(target_data['coord_longitude'])
+        else:
+            raise KeyError(f"Could not find longitude in target grid. Available: {target_data.files}")
     else:
-        raise KeyError(f"Could not find latitude coordinate. Available: {data.files}")
+        # Latitude coordinate from input
+        if 'coord_lat' in data.files:
+            lat = np.array(data['coord_lat'])
+        elif 'coord_latitude' in data.files:
+            lat = np.array(data['coord_latitude'])
+        else:
+            raise KeyError(f"Could not find latitude coordinate. Available: {data.files}")
+        
+        # Longitude coordinate from input
+        if 'coord_lon' in data.files:
+            lon = np.array(data['coord_lon'])
+        elif 'coord_longitude' in data.files:
+            lon = np.array(data['coord_longitude'])
+        else:
+            raise KeyError(f"Could not find longitude coordinate. Available: {data.files}")
     
-    # Longitude coordinate
-    if 'coord_lon' in data.files:
-        lon = np.array(data['coord_lon'])
-    elif 'coord_longitude' in data.files:
-        lon = np.array(data['coord_longitude'])
-    else:
-        raise KeyError(f"Could not find longitude coordinate. Available: {data.files}")
-    
-    print(f"  Grid: {len(lat)} x {len(lon)}")
+    print(f"  Output grid: {len(lat)} x {len(lon)}")
     print(f"  Times: {len(times)} ({times[0]} to {times[-1]})")
     
     # Check if latitude needs to be reversed for GrADS
@@ -437,6 +460,7 @@ def main():
     parser.add_argument('--era5-input', help='ERA5 .npz file for interpolation')
     parser.add_argument('--interpolate', action='store_true', 
                        help='Interpolate from ERA5 to high-res grid')
+    parser.add_argument('--target-grid', help='Reference file for target grid (lat/lon)')
     parser.add_argument('--no-climatology', action='store_true',
                        help='Skip climatology computation')
     
@@ -454,7 +478,8 @@ def main():
         varname_in=args.varname,
         era5_path=args.era5_input,
         interpolate=args.interpolate,
-        compute_clim=not args.no_climatology
+        compute_clim=not args.no_climatology,
+        target_grid_path=args.target_grid
     )
     
     print("\n" + "="*80)

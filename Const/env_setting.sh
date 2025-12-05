@@ -11,10 +11,12 @@ TARGET_DATA_DIR="/home/yi260/rds/hpc-work/Download/MSWX_V100/Past/Tmax/Daily"
 # Output directories
 INTERMEDIATE_DIR="${ROOT_DIR}/Data/Intermediate"
 PROCESSED_DIR="${ROOT_DIR}/Data/Processed"
+FIGS_DIR="${ROOT_DIR}/Figs"
 
 # Create output directories if they don't exist
 mkdir -p "${INTERMEDIATE_DIR}"
 mkdir -p "${PROCESSED_DIR}"
+mkdir -p "${FIGS_DIR}"
 
 ln -rsf ${TRAINING_DATA_DIR} ${ROOT_DIR}/Data/Training
 ln -rsf ${TARGET_DATA_DIR} ${ROOT_DIR}/Data/Target
