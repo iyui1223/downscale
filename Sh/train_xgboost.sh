@@ -26,16 +26,25 @@
 set -e  # Exit on error
 set -o pipefail
 
+# Get the directory where this script is located and source env_setting.sh FIRST
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "${SCRIPT_DIR}/../Const/env_setting.sh" ]; then
+    source "${SCRIPT_DIR}/../Const/env_setting.sh"
+else
+    echo "ERROR: env_setting.sh not found!"
+    exit 1
+fi
+
 ################################################################################
 # EDITABLE PARAMETERS
 ################################################################################
 
-# Input data files (relative to ROOT_DIR/Data/Processed/)
-ERA5_DATA_FILE="training_era5_tmax.npz"
-MSWX_DATA_FILE="target_mswx_tmax.npz"
+# Input data files (from env_setting.sh, relative to PROCESSED_DIR)
+ERA5_DATA_FILE="${ERA5_DATA_FILE:-training_era5_tmax.npz}"
+MSWX_DATA_FILE="${MSWX_DATA_FILE:-target_mswx_tmax.npz}"
 
-# Model configuration
-MODEL_NAME="xgboost_downscale_tmax"
+# Model configuration (from env_setting.sh)
+MODEL_NAME="${MODEL_NAME:-xgboost_downscale_tmax}"
 
 # Training parameters
 SAMPLE_RATIO="0.7"          # Use 10% of data for faster training (1.0 = use all data)
@@ -87,19 +96,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 ################################################################################
-# Setup environment and directories
+# Setup environment and directories (env_setting.sh already sourced at top)
 ################################################################################
-
-# Get the directory where this script is located
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# Source environment settings
-if [ -f "${SCRIPT_DIR}/../Const/env_setting.sh" ]; then
-    source "${SCRIPT_DIR}/../Const/env_setting.sh"
-else
-    echo "ERROR: env_setting.sh not found!"
-    exit 1
-fi
 
 # Change to root directory
 cd "${ROOT_DIR}"

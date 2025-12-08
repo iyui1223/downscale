@@ -26,6 +26,14 @@ export LON_MAX=2.0
 export TIME_START="2000-01-01"
 export TIME_END="2020-12-31"
 
+# Preprocessed data file names (without path, stored in PROCESSED_DIR)
+export ERA5_DATA_FILE="training_era5_tmax.npz"
+export MSWX_DATA_FILE="target_mswx_tmax.npz"
+
+# Model configuration
+export MODEL_TYPE="xgboost"                    # Model type: xgboost, cnn, unet, etc.
+export MODEL_NAME="xgboost_downscale_tmax"     # Full model name for output files
+
 # ------------------------------------------------
 
 # inputs

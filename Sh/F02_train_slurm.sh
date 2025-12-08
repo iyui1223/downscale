@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=xgb_train
+#SBATCH --job-name=ds_train
 #SBATCH --account=cranmer-sl3-cpu
 #SBATCH --partition=sapphire
 #SBATCH --time=04:00:00
@@ -13,9 +13,15 @@
 #SBATCH --mail-user=yi260@cam.ac.uk
 
 ################################################################################
-# SLURM Job Script for XGBoost Downscaling Training
+# SLURM Job Script for Downscaling Model Training
 #
-# This script submits the XGBoost training to the HPC cluster.
+# This script submits the model training to the HPC cluster.
+# Model type is configured in Const/env_setting.sh (MODEL_TYPE variable).
+#
+# Supported model types:
+#   - xgboost: XGBoost gradient boosting (default)
+#   - cnn: Convolutional Neural Network (future)
+#   - unet: U-Net architecture (future)
 #
 # Usage:
 #   sbatch Sh/F02_train_slurm.sh
@@ -28,9 +34,14 @@
 #   tail -f Log/train_JOBID.out
 ################################################################################
 
+# Load environment settings FIRST
+source ../Const/env_setting.sh
+
 echo "================================================================================"
-echo "XGBoost Training Job"
+echo "Downscaling Model Training Job"
 echo "================================================================================"
+echo "Model type:          ${MODEL_TYPE}"
+echo "Model name:          ${MODEL_NAME}"
 echo "Job ID:              $SLURM_JOB_ID"
 echo "Job name:            $SLURM_JOB_NAME"
 echo "Node:                $SLURM_NODELIST"
@@ -41,10 +52,7 @@ echo "Started:             $(date)"
 echo "================================================================================"
 echo ""
 
-# Load environment settings
-source ../Const/env_setting.sh
-
-# Change to root directory
+# Change to root directory (env_setting.sh already sourced at top)
 cd ${ROOT_DIR}
 
 # Set OpenMP threads for XGBoost
@@ -73,18 +81,40 @@ poetry run python3 -c "import sklearn; print(f'  scikit-learn: {sklearn.__versio
 echo ""
 
 ################################################################################
-# Run training with all arguments passed through
+# Run training based on MODEL_TYPE
 ################################################################################
 
 echo "================================================================================"
-echo "Starting training script..."
+echo "Starting ${MODEL_TYPE} training script..."
 echo "================================================================================"
 echo ""
 
 START_TIME=$(date +%s)
 
-# Execute the training wrapper script with all arguments
-bash Sh/train_xgboost.sh "$@"
+# Execute the appropriate training script based on MODEL_TYPE
+case "${MODEL_TYPE}" in
+    xgboost)
+        echo "Running XGBoost training..."
+        bash Sh/train_xgboost.sh "$@"
+        ;;
+    cnn)
+        echo "Running CNN training..."
+        # bash Sh/train_cnn.sh "$@"  # Uncomment when implemented
+        echo "ERROR: CNN training not yet implemented"
+        exit 1
+        ;;
+    unet)
+        echo "Running U-Net training..."
+        # bash Sh/train_unet.sh "$@"  # Uncomment when implemented
+        echo "ERROR: U-Net training not yet implemented"
+        exit 1
+        ;;
+    *)
+        echo "ERROR: Unknown model type '${MODEL_TYPE}'"
+        echo "Supported types: xgboost, cnn, unet"
+        exit 1
+        ;;
+esac
 
 EXIT_CODE=$?
 
@@ -107,7 +137,8 @@ if [ $EXIT_CODE -eq 0 ]; then
     echo ""
     echo "✓ Training completed successfully!"
     echo ""
-    echo "Model location: ${ROOT_DIR}/Models/xgboost_downscale_tmax/"
+    echo "Model type:     ${MODEL_TYPE}"
+    echo "Model location: ${ROOT_DIR}/Models/${MODEL_NAME}/"
     echo ""
 else
     echo ""

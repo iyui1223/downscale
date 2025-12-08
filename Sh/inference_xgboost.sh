@@ -43,22 +43,28 @@ set -o pipefail
 ################################################################################
 # NOTE: This script is designed to be called from F03_inference_evaluate_slurm.sh
 #       Parameters are passed via command line arguments or environment variables.
-#       DO NOT edit default parameters here - configure them in F03 instead.
+#       If running standalone, env_setting.sh is sourced for defaults.
 ################################################################################
+
+# Source env_setting.sh if not already loaded (for standalone use)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -z "${ROOT_DIR}" ] && [ -f "${SCRIPT_DIR}/../Const/env_setting.sh" ]; then
+    source "${SCRIPT_DIR}/../Const/env_setting.sh"
+fi
 
 ################################################################################
 # Parse command line arguments
 ################################################################################
 
-# Initialize from environment variables (set by F03 wrapper)
+# Initialize from environment variables (from env_setting.sh or F03 wrapper)
 MODEL_NAME="${MODEL_NAME:-xgboost_downscale_tmax}"
 MODEL_DIR="Models/${MODEL_NAME}"
 ERA5_DATA_FILE="${ERA5_DATA_FILE:-training_era5_tmax.npz}"
-TARGET_GRID_FILE="${TARGET_GRID_FILE:-target_mswx_tmax.npz}"
+TARGET_GRID_FILE="${MSWX_DATA_FILE:-target_mswx_tmax.npz}"
 OUTPUT_NAME="${OUTPUT_NAME:-downscaled_tmax}"
 CHUNK_SIZE="${CHUNK_SIZE:-100}"
 RUN_EVALUATION="${RUN_EVALUATION:-true}"
-GROUND_TRUTH_FILE="${GROUND_TRUTH_FILE:-target_mswx_tmax.npz}"
+GROUND_TRUTH_FILE="${MSWX_DATA_FILE:-target_mswx_tmax.npz}"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -95,17 +101,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 ################################################################################
-# Setup environment and directories
+# Setup environment and directories (env_setting.sh already sourced at top)
 ################################################################################
-
-source ../Const/env_setting.sh
-
-# Export variables so they're available to child scripts (evaluate_xgboost.sh)
-export ROOT_DIR
-export PROCESSED_DIR
-export INTERMEDIATE_DIR
-export TRAINING_DATA_DIR
-export TARGET_DATA_DIR
 
 # Change to root directory
 cd "${ROOT_DIR}"

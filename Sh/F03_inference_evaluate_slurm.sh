@@ -35,6 +35,9 @@
 set -e  # Exit on error
 set -o pipefail
 
+# Load environment settings FIRST (before configuration)
+source ../Const/env_setting.sh
+
 ################################################################################
 # USER CONFIGURATION SECTION - EDIT THESE PARAMETERS
 ################################################################################
@@ -54,12 +57,12 @@ RUN_EVALUATION="true"    # Set to "true" to run evaluation, "false" to skip
 # INFERENCE CONFIGURATION (only used if RUN_INFERENCE="true")
 # ============================================================================
 
-# Model configuration
-MODEL_NAME="xgboost_downscale_tmax"
+# Model configuration (from env_setting.sh)
+MODEL_NAME="${MODEL_NAME:-xgboost_downscale_tmax}"
 
-# Input data for inference
-ERA5_DATA_FILE="training_era5_tmax.npz"     # ERA5 data to downscale
-TARGET_GRID_FILE="target_mswx_tmax.npz"     # Reference for target resolution
+# Input data for inference (from env_setting.sh, with fallbacks)
+ERA5_DATA_FILE="${ERA5_DATA_FILE:-training_era5_tmax.npz}"
+TARGET_GRID_FILE="${MSWX_DATA_FILE:-target_mswx_tmax.npz}"
 
 # Output configuration
 OUTPUT_NAME="downscaled_tmax"               # Base name for output predictions
@@ -75,8 +78,8 @@ CHUNK_SIZE="100"                            # Timesteps to process at once
 # If RUN_INFERENCE="false": specify the existing predictions file to evaluate
 PREDICTIONS_FILE="downscaled_tmax.npz"      # Predictions file to evaluate
 
-# Ground truth data for evaluation
-GROUND_TRUTH_FILE="target_mswx_tmax.npz"    # Ground truth MSWX data
+# Ground truth data for evaluation (from env_setting.sh, with fallback)
+GROUND_TRUTH_FILE="${MSWX_DATA_FILE:-target_mswx_tmax.npz}"
 
 # Evaluation output name
 EVAL_OUTPUT_NAME="downscaled_tmax_eval"     # Base name for evaluation outputs
@@ -111,10 +114,7 @@ if [ "${RUN_INFERENCE}" != "true" ] && [ "${RUN_EVALUATION}" != "true" ]; then
     exit 1
 fi
 
-# Load environment settings
-source ../Const/env_setting.sh
-
-# Change to root directory
+# Change to root directory (env_setting.sh already sourced at top)
 cd ${ROOT_DIR}
 
 # Set OpenMP threads
