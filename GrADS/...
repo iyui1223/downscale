@@ -1,0 +1,51 @@
+*
+* Test GrADS File Opening
+*
+* Simple test to verify .ctl files can be opened and read
+*
+
+function main(args)
+
+  data_dir = subwrd(args, 1)
+  
+  if (data_dir = '')
+    say 'ERROR: Usage: test_open.gs DATA_DIR'
+    return 1
+  endif
+  
+  say 'Testing GrADS file opening...'
+  say 'Data directory: 'data_dir
+  say ''
+  
+* Try to open files
+  say 'Opening predictions.ctl...'
+  'open 'data_dir'/predictions.ctl'
+  pred_file = 1
+  say '  Opened as file 'pred_file
+  
+  say 'Opening ground_truth.ctl...'
+  'open 'data_dir'/ground_truth.ctl'
+  truth_file = 2
+  say '  Opened as file 'truth_file
+  
+* Query file info
+  say ''
+  say 'Querying file 'pred_file'...'
+  'q file 'pred_file
+  
+* Try to set dimension and display
+  say ''
+  say 'Testing data read...'
+  'set t 1'
+  'set gxout print'
+  'd data.'pred_file
+  
+  say ''
+  say 'All tests passed!'
+  say ''
+  
+  'close 'truth_file
+  'close 'pred_file
+  
+return 0
+

@@ -7,6 +7,9 @@
 *.h5
 *.hdf5
 Data/
+Models/
+__pycache__/
+Figs/
 old/
 tmp/
 
