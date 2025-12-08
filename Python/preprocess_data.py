@@ -162,36 +162,59 @@ class SafeDataPreprocessor:
                 consolidated=True
             )
             
-            # Save statistics
-            stats = self.compute_statistics_chunked(dataset)
-            stats_path = f"{output_path}_stats.yaml"
-            with open(stats_path, 'w') as f:
-                yaml.dump(stats, f, default_flow_style=False)
-            logger.info(f"Saved statistics to {stats_path}")
-            
         elif save_format == 'npz':
-            # For NPZ, we need to be careful with memory
-            logger.info(f"Saving as compressed .npz: {output_path}.npz")
+            # Chunked processing: write data batch-by-batch using memmap
+            # Then save as uncompressed npz (compressed requires full RAM load)
+            logger.info(f"Saving as .npz (chunked processing): {output_path}.npz")
             
             # Check total size
             total_size_gb = dataset.nbytes / 1e9
             logger.info(f"Total dataset size: {total_size_gb:.2f} GB")
             
-            if total_size_gb > 30:
-                logger.warning(f"Dataset is very large ({total_size_gb:.2f} GB). Consider using zarr format instead.")
-                logger.warning("Attempting to save in NPZ format anyway...")
-            
-            # Convert to numpy arrays with progress tracking
+            # Store paths to memmap temp files (keep them open for npz save)
+            temp_files = []
             data_dict = {}
             
             for var in dataset.data_vars:
-                logger.info(f"Converting {var} to numpy array...")
-                # Use compute() with proper chunking
-                data_dict[var] = dataset[var].values
-                logger.info(f"  Shape: {data_dict[var].shape}, Size: {data_dict[var].nbytes / 1e9:.2f} GB")
-                gc.collect()  # Force garbage collection after each variable
+                logger.info(f"Processing {var} in chunks...")
+                da = dataset[var]
+                shape = da.shape
+                dtype = np.float32  # Use float32 to save space
+                
+                # Create a temporary memory-mapped file
+                temp_path = f"{output_path}_{var}_temp.dat"
+                temp_files.append(temp_path)
+                logger.info(f"  Shape: {shape}, dtype: {dtype}")
+                logger.info(f"  Creating temp memmap: {temp_path}")
+                
+                # Create memory-mapped array on disk
+                mmap_array = np.memmap(temp_path, dtype=dtype, mode='w+', shape=shape)
+                
+                # Get time dimension size and chunk size
+                n_times = shape[0]
+                chunk_size = time_batch_size
+                
+                # Process in time batches
+                for t_start in range(0, n_times, chunk_size):
+                    t_end = min(t_start + chunk_size, n_times)
+                    logger.info(f"  Processing timesteps {t_start}-{t_end} of {n_times}")
+                    
+                    # Load only this chunk into memory
+                    chunk_data = da.isel(time=slice(t_start, t_end)).values.astype(dtype)
+                    
+                    # Write to memmap (directly to disk)
+                    mmap_array[t_start:t_end] = chunk_data
+                    
+                    # Free memory
+                    del chunk_data
+                    gc.collect()
+                
+                # Flush to disk and keep reference
+                mmap_array.flush()
+                data_dict[var] = mmap_array  # Keep memmap reference (not loaded to RAM)
+                logger.info(f"  Completed {var}")
             
-            # Add coordinates
+            # Add coordinates (small, load fully)
             for coord in dataset.coords:
                 if coord not in dataset.dims:
                     continue
@@ -201,19 +224,21 @@ class SafeDataPreprocessor:
             # Add metadata
             data_dict['dims'] = np.array([str(d) for d in dataset.dims], dtype=object)
             
-            logger.info("Compressing and saving to disk...")
-            np.savez_compressed(f"{output_path}.npz", **data_dict)
+            # Save as uncompressed npz (works with memmap without loading to RAM)
+            # Note: np.savez iterates and saves arrays one by one
+            logger.info("Saving to npz (uncompressed for memory efficiency)...")
+            np.savez(f"{output_path}.npz", **data_dict)
             
-            # Clear memory
-            del data_dict
+            # Clean up memmap references and temp files
+            for var in dataset.data_vars:
+                if var in data_dict:
+                    del data_dict[var]
             gc.collect()
             
-            # Save statistics
-            stats = self.compute_statistics_chunked(dataset)
-            stats_path = f"{output_path}_stats.yaml"
-            with open(stats_path, 'w') as f:
-                yaml.dump(stats, f, default_flow_style=False)
-            logger.info(f"Saved statistics to {stats_path}")
+            for temp_path in temp_files:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+                    logger.info(f"  Removed temp file: {temp_path}")
         
         else:
             raise ValueError(f"Unknown save format: {save_format}")
