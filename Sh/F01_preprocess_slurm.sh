@@ -6,7 +6,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=128G
+#SBATCH --mem=32G
 #SBATCH --output=../Log/preprocess.out
 #SBATCH --error=../Log/preprocess.err
 #SBATCH --mail-type=BEGIN,END,FAIL
@@ -102,17 +102,15 @@ poetry run python -c "import netCDF4; print(f'netCDF4: {netCDF4.__version__}')" 
 echo ""
 echo "Starting Python conversion..."
 
-CONFIG_FILE="${ROOT_DIR}/Const/preprocess_config.yaml"
-
-if [ ! -f "$CONFIG_FILE" ]; then
-    echo "ERROR: Configuration file not found: $CONFIG_FILE"
+if [ ! -f "$PREPROCESS_CONFIG" ]; then
+    echo "ERROR: Configuration file not found: $PREPROCESS_CONFIG"
     exit 1
 fi
 
 START_TIME_PY=$(date +%s)
 
 poetry run python Python/preprocess_data.py \
-    --config "$CONFIG_FILE"
+    --config "$PREPROCESS_CONFIG"
 
 EXIT_CODE_PY=$?
 

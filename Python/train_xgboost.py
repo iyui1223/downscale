@@ -388,13 +388,20 @@ def main():
         sample_ratio=args.sample_ratio
     )
     
-    # Extract targets
+    # Extract targets (memory-efficient: process timestep by timestep)
     print("\nExtracting target values...")
-    targets = mswx_temp[
-        target_indices[:, 0],
-        target_indices[:, 1],
-        target_indices[:, 2]
-    ]
+    targets = np.zeros(len(target_indices), dtype=np.float32)
+    
+    # Group indices by timestep to minimize disk reads from memory-mapped array
+    unique_times = np.unique(target_indices[:, 0])
+    for t in tqdm(unique_times, desc="  Extracting targets"):
+        t_mask = target_indices[:, 0] == t
+        t_lat_idx = target_indices[t_mask, 1]
+        t_lon_idx = target_indices[t_mask, 2]
+        # Load only this timestep from disk (memory-mapped)
+        mswx_slice = np.array(mswx_temp[t])
+        targets[t_mask] = mswx_slice[t_lat_idx, t_lon_idx]
+    
     print(f"  Targets shape: {targets.shape}")
     
     # Remove any NaN values

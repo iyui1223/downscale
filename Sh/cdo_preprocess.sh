@@ -20,33 +20,19 @@
 # Don't exit immediately on error - we want better error messages
 set -o pipefail
 
-################################################################################
-# editables
-################################################################################
-
-# Enable spatial subsetting for large datasets to reduce memory usage
-apply_spatial_subset="true"  # Set to "false" to process full spatial domain
-
-# Spatial bounds (UK region)
-LAT_MIN=49.0
-LAT_MAX=61.0
-LON_MIN=-11.0
-LON_MAX=2.0
-
-# Temporal bounds
-TIME_START="2000-01-01"
-TIME_END="2020-12-31"
-
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Source environment settings to get paths
+# Source environment settings FIRST to get all configuration
 if [ -f "${SCRIPT_DIR}/../Const/env_setting.sh" ]; then
     source "${SCRIPT_DIR}/../Const/env_setting.sh"
 else
     echo "ERROR: env_setting.sh not found!"
     exit 1
 fi
+
+# Use parameters from env_setting.sh (with defaults for backward compatibility)
+apply_spatial_subset="${APPLY_SPATIAL_SUBSET:-true}"
 
 # Load CDO module
 echo "Loading CDO module..."

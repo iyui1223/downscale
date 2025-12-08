@@ -201,13 +201,14 @@ echo ""
 
 # Convert and interpolate ERA5 if available
 if [ "$HAS_ERA5" = true ]; then
-    echo "Converting and interpolating ERA5..."
+    echo "Converting and regridding ERA5 to prediction grid..."
     poetry run python3 "${ROOT_DIR}/Python/write_binary.py" \
         --input "${ERA5_PATH}" \
         --output "${EVAL_DATA_DIR}/era5_input" \
         --varname t2m \
         --era5-input "${ERA5_PATH}" \
-        --interpolate
+        --interpolate \
+        --target-grid "${PRED_PATH}"
     
     echo ""
 fi
