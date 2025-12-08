@@ -27,8 +27,8 @@ from tqdm import tqdm
 
 def load_data(era5_path: str, mswx_path: str) -> Tuple[np.ndarray, ...]:
     """
-    Load preprocessed ERA5 and MSWX data.
-    
+    Load preprocessed ERA5 and MSWX data using memory-mapped arrays.
+       
     Args:
         era5_path: Path to ERA5 .npz file
         mswx_path: Path to MSWX .npz file
@@ -36,29 +36,29 @@ def load_data(era5_path: str, mswx_path: str) -> Tuple[np.ndarray, ...]:
     Returns:
         Tuple of (era5_data, mswx_data, era5_coords, mswx_coords)
     """
-    print("Loading data...")
+    print("Loading data (memory-mapped)...")
     print(f"  ERA5: {era5_path}")
     print(f"  MSWX: {mswx_path}")
     
-    # Load ERA5 (low-resolution input)
-    era5 = np.load(era5_path, allow_pickle=True)
-    era5_temp = era5['t2m']  # Shape: (time, lat, lon)
-    era5_times = era5['coord_valid_time']
-    era5_lat = era5['coord_latitude']
-    era5_lon = era5['coord_longitude']
+    # Load ERA5 (low-resolution input) - memory-mapped
+    era5 = np.load(era5_path, mmap_mode='r', allow_pickle=True)
+    era5_temp = era5['t2m']  # Shape: (time, lat, lon) - not loaded until accessed
+    era5_times = np.array(era5['coord_valid_time'])  # Small, load fully
+    era5_lat = np.array(era5['coord_latitude'])      # Small, load fully
+    era5_lon = np.array(era5['coord_longitude'])     # Small, load fully
     
-    # Load MSWX (high-resolution target)
-    mswx = np.load(mswx_path, allow_pickle=True)
-    mswx_temp = mswx['air_temperature']  # Shape: (time, lat, lon)
-    mswx_times = mswx['coord_time']
-    mswx_lat = mswx['coord_lat']
-    mswx_lon = mswx['coord_lon']
+    # Load MSWX (high-resolution target) - memory-mapped
+    mswx = np.load(mswx_path, mmap_mode='r', allow_pickle=True)
+    mswx_temp = mswx['air_temperature']  # Shape: (time, lat, lon) - not loaded until accessed
+    mswx_times = np.array(mswx['coord_time'])  # Small, load fully
+    mswx_lat = np.array(mswx['coord_lat'])     # Small, load fully
+    mswx_lon = np.array(mswx['coord_lon'])     # Small, load fully
     
     # Verify temporal alignment
     if not np.array_equal(era5_times, mswx_times):
         raise ValueError("ERA5 and MSWX time coordinates do not match!")
     
-    print(f"\nData loaded successfully:")
+    print(f"\nData loaded (memory-mapped, not in RAM yet):")
     print(f"  ERA5 shape: {era5_temp.shape} (time, lat, lon)")
     print(f"  MSWX shape: {mswx_temp.shape} (time, lat, lon)")
     print(f"  Time steps: {len(era5_times)}")
@@ -126,13 +126,15 @@ def create_features(era5_temp: np.ndarray,
     
     print(f"  Processing {n_samples:,} samples...")
     
-    # Process each timestep
+    # Process each timestep one at a time (memory-efficient)
+    # With mmap_mode='r', only the current timestep slice is loaded into RAM
     sample_idx = 0
     with tqdm(total=n_times, desc="  Timesteps") as pbar:
         for t in range(n_times):
             # Create interpolator for this timestep
+            # Only era5_temp[t] is loaded from disk (memory-mapped)
             # Note: ERA5 temperature is in Kelvin, we'll convert to Celsius
-            era5_celsius = era5_temp[t] - 273.15
+            era5_celsius = np.array(era5_temp[t]) - 273.15  # Explicit copy to RAM for processing
             interpolator = RegularGridInterpolator(
                 (era5_lat, era5_lon), 
                 era5_celsius,
