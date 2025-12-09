@@ -409,26 +409,14 @@ process_dataset() {
 # Main Processing
 ################################################################################
 
-# Process training data (ERA5) - COMMENTED OUT (already completed)
-# Training data already exists at: Data/Intermediate/training_era5_tmax_preprocessed.nc
-echo "=========================================="
-echo "Skipping Training Data (ERA5) - Already Completed"
-echo "=========================================="
-echo "Existing file: ${INTERMEDIATE_DIR}/training_era5_tmax_preprocessed.nc"
-if [ -f "${INTERMEDIATE_DIR}/training_era5_tmax_preprocessed.nc" ]; then
-    echo "  Size: $(ls -lh ${INTERMEDIATE_DIR}/training_era5_tmax_preprocessed.nc | awk '{print $5}')"
-else
-    echo "  WARNING: File not found!"
+# Process training data (ERA5)
+if ! process_dataset "Training Data (ERA5)" "$TRAINING_DATA_DIR" "training_era5_tmax"; then
+    echo ""
+    echo "=========================================="
+    echo "FAILED: Training data processing failed"
+    echo "=========================================="
+    exit 1
 fi
-echo ""
-
-# if ! process_dataset "Training Data (ERA5)" "$TRAINING_DATA_DIR" "training_era5_tmax"; then
-#     echo ""
-#     echo "=========================================="
-#     echo "FAILED: Training data processing failed"
-#     echo "=========================================="
-#     exit 1
-# fi
 
 # Process target data (MSWX)
 if ! process_dataset "Target Data (MSWX)" "$TARGET_DATA_DIR" "target_mswx_tmax"; then
