@@ -37,6 +37,9 @@ logger = logging.getLogger(__name__)
 class SafeDataPreprocessor:
     """Memory-safe preprocessor for meteorological data."""
     
+    # Possible time dimension names in different datasets
+    TIME_DIM_NAMES = ['time', 'valid_time', 'Time', 'TIME']
+    
     def __init__(self, config: Dict):
         """Initialize preprocessor with configuration."""
         self.config = config
@@ -52,6 +55,13 @@ class SafeDataPreprocessor:
         
         logger.info(f"Intermediate directory: {self.intermediate_dir}")
         logger.info(f"Output directory: {self.output_dir}")
+    
+    def _get_time_dim(self, ds: xr.Dataset) -> str:
+        """Detect the time dimension name in the dataset."""
+        for name in self.TIME_DIM_NAMES:
+            if name in ds.dims:
+                return name
+        raise ValueError(f"No time dimension found. Available dims: {list(ds.dims)}")
     
     def load_single_netcdf(
         self,
@@ -75,15 +85,24 @@ class SafeDataPreprocessor:
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
         
-        # Open with chunking for memory efficiency
+        # First, open without chunking to detect time dimension name
+        with xr.open_dataset(file_path, engine='netcdf4') as ds_probe:
+            time_dim = self._get_time_dim(ds_probe)
+            logger.info(f"Detected time dimension: {time_dim}")
+        
+        # Open with chunking for memory efficiency using detected time dim
         ds = xr.open_dataset(
             file_path,
-            chunks={'time': time_chunk},
+            chunks={time_dim: time_chunk},
             engine='netcdf4'
         )
         
+        # Store time dimension name as attribute for later use
+        ds.attrs['_time_dim'] = time_dim
+        
         if variable_name and variable_name in ds:
             ds = ds[[variable_name]]
+            ds.attrs['_time_dim'] = time_dim  # Preserve attribute
             logger.info(f"Selected variable: {variable_name}")
         
         logger.info(f"Loaded dataset shape: {dict(ds.dims)}")
@@ -171,6 +190,10 @@ class SafeDataPreprocessor:
             total_size_gb = dataset.nbytes / 1e9
             logger.info(f"Total dataset size: {total_size_gb:.2f} GB")
             
+            # Get time dimension name from dataset attribute or detect it
+            time_dim = dataset.attrs.get('_time_dim') or self._get_time_dim(dataset)
+            logger.info(f"Using time dimension: {time_dim}")
+            
             # Store paths to memmap temp files (keep them open for npz save)
             temp_files = []
             data_dict = {}
@@ -199,8 +222,8 @@ class SafeDataPreprocessor:
                     t_end = min(t_start + chunk_size, n_times)
                     logger.info(f"  Processing timesteps {t_start}-{t_end} of {n_times}")
                     
-                    # Load only this chunk into memory
-                    chunk_data = da.isel(time=slice(t_start, t_end)).values.astype(dtype)
+                    # Load only this chunk into memory (use detected time dimension)
+                    chunk_data = da.isel({time_dim: slice(t_start, t_end)}).values.astype(dtype)
                     
                     # Write to memmap (directly to disk)
                     mmap_array[t_start:t_end] = chunk_data

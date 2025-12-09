@@ -410,13 +410,13 @@ process_dataset() {
 ################################################################################
 
 # Process training data (ERA5)
-if ! process_dataset "Training Data (ERA5)" "$TRAINING_DATA_DIR" "training_era5_tmax"; then
-    echo ""
-    echo "=========================================="
-    echo "FAILED: Training data processing failed"
-    echo "=========================================="
-    exit 1
-fi
+#if ! process_dataset "Training Data (ERA5)" "$TRAINING_DATA_DIR" "training_era5_tmax"; then
+#    echo ""
+#    echo "=========================================="
+#    echo "FAILED: Training data processing failed"
+#    echo "=========================================="
+#    exit 1
+#fi
 
 # Process target data (MSWX)
 if ! process_dataset "Target Data (MSWX)" "$TARGET_DATA_DIR" "target_mswx_tmax"; then
