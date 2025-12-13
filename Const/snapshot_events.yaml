@@ -1,0 +1,90 @@
+# Extreme Temperature Events for UK (2000-2020)
+# Each event covers approximately 14 days for comprehensive analysis
+#
+# Format:
+#   name: Short identifier (used in filenames)
+#   description: Human-readable description
+#   start_date: YYYY-MM-DD format
+#   end_date: YYYY-MM-DD format
+#   type: hot | cold
+#   notes: Additional context
+
+events:
+  - name: aug2003_heatwave
+    description: "August 2003 European Heatwave"
+    start_date: "2003-08-04"
+    end_date: "2003-08-17"
+    type: hot
+    notes: "Record 38.5°C at Faversham, Kent. Deadliest European heatwave."
+
+  - name: jul2006_heatwave
+    description: "July 2006 UK Heatwave"
+    start_date: "2006-07-14"
+    end_date: "2006-07-27"
+    type: hot
+    notes: "Prolonged extreme heat, widespread drought conditions."
+
+  - name: feb2009_cold
+    description: "February 2009 Cold Wave"
+    start_date: "2009-02-01"
+    end_date: "2009-02-14"
+    type: cold
+    notes: "Heavy snowfall across UK, major transport disruption."
+
+  - name: dec2010_freeze
+    description: "December 2010 Big Freeze"
+    start_date: "2010-12-16"
+    end_date: "2010-12-29"
+    type: cold
+    notes: "Coldest December in over 100 years. Record low temperatures."
+
+  - name: jul2013_heatwave
+    description: "July 2013 Heatwave"
+    start_date: "2013-07-10"
+    end_date: "2013-07-23"
+    type: hot
+    notes: "Extended summer heatwave, health warnings issued."
+
+  - name: mar2018_beast
+    description: "March 2018 Beast from the East"
+    start_date: "2018-02-24"
+    end_date: "2018-03-09"
+    type: cold
+    notes: "Siberian air mass, heavy snow, 'Beast from the East' naming."
+
+  - name: feb2019_warmth
+    description: "February 2019 Winter Warmth"
+    start_date: "2019-02-21"
+    end_date: "2019-03-06"
+    type: hot
+    notes: "Record February temperature 20.6°C in Wales."
+
+  - name: jul2019_heatwave
+    description: "July 2019 Heatwave"
+    start_date: "2019-07-21"
+    end_date: "2019-08-03"
+    type: hot
+    notes: "New UK all-time record 38.7°C at Cambridge Botanic Garden."
+
+# Default settings for snapshot generation
+settings:
+  # Temperature range for color scale (Celsius)
+  # Using global range from colors.gs (indices 71-125)
+  # Range: -80 to 52.5 C in 2.5 degree intervals (55 levels)
+  temp_min: -80
+  temp_max: 52.5
+  temp_interval: 2.5
+  
+  # Anomaly range for color scale (Celsius)
+  # Using bias colormap from colors.gs (indices 50-70)
+  anom_min: -10
+  anom_max: 10
+  
+  # Difference range for color scale (Celsius)
+  diff_min: -5
+  diff_max: 5
+  
+  # Image dimensions
+  image_width: 1200
+  image_height: 900
+
