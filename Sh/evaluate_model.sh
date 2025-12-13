@@ -202,13 +202,15 @@ echo ""
 # Convert and interpolate ERA5 if available
 if [ "$HAS_ERA5" = true ]; then
     echo "Converting and regridding ERA5 to prediction grid..."
+    echo "  (Also converting from Kelvin to Celsius)"
     poetry run python3 "${ROOT_DIR}/Python/write_binary.py" \
         --input "${ERA5_PATH}" \
         --output "${EVAL_DATA_DIR}/era5_input" \
         --varname t2m \
         --era5-input "${ERA5_PATH}" \
         --interpolate \
-        --target-grid "${PRED_PATH}"
+        --target-grid "${PRED_PATH}" \
+        --kelvin-to-celsius
     
     echo ""
 fi

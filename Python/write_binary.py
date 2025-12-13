@@ -187,7 +187,7 @@ def interpolate_era5_year(era5_data, year_start, year_end, era5_lat, era5_lon,
 
 def process_npz_streaming(npz_path, output_base, varname_in='air_temperature',
                           era5_path=None, interpolate=False, compute_clim=True,
-                          target_grid_path=None):
+                          target_grid_path=None, kelvin_to_celsius=False):
     """
     Process NPZ file in streaming manner (year-by-year).
     
@@ -345,6 +345,12 @@ def process_npz_streaming(npz_path, output_base, varname_in='air_temperature',
                 # Load directly from high-res data
                 year_data = np.array(data[varname_in][year_start:year_end+1, :, :], dtype=np.float32)
             
+            # Convert Kelvin to Celsius if requested
+            if kelvin_to_celsius:
+                year_data = year_data - 273.15
+                if year == years[0]:
+                    print(f"    Converting from Kelvin to Celsius (subtracting 273.15)")
+            
             # Write to binary file
             for t in range(n_times):
                 # Reverse latitude if needed for GrADS compatibility
@@ -463,6 +469,8 @@ def main():
     parser.add_argument('--target-grid', help='Reference file for target grid (lat/lon)')
     parser.add_argument('--no-climatology', action='store_true',
                        help='Skip climatology computation')
+    parser.add_argument('--kelvin-to-celsius', action='store_true',
+                       help='Convert temperature from Kelvin to Celsius (subtract 273.15)')
     
     args = parser.parse_args()
     
@@ -479,7 +487,8 @@ def main():
         era5_path=args.era5_input,
         interpolate=args.interpolate,
         compute_clim=not args.no_climatology,
-        target_grid_path=args.target_grid
+        target_grid_path=args.target_grid,
+        kelvin_to_celsius=args.kelvin_to_celsius
     )
     
     print("\n" + "="*80)

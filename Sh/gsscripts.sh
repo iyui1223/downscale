@@ -113,6 +113,11 @@ fi
 
 echo ""
 
+# Try loading Intel modules (suppress errors if not available)
+echo "Attempting to load Intel compiler modules..."
+module load intel/compilers 2>/dev/null || module load intel-oneapi-compilers 2>/dev/null || echo "  (Intel modules not available - continuing anyway)"
+echo ""
+
 ################################################################################
 # Run GrADS evaluation scripts
 ################################################################################
@@ -122,59 +127,52 @@ echo "Running GrADS Evaluation"
 echo "================================================================================"
 echo ""
 
+# Track results
+SPATIAL_RC=0
+DIFF_RC=0
+
 # 1. Spatial maps
 echo "1. Creating spatial maps..."
 GRADS_SCRIPT="${SCRIPT_DIR}/evaluate_spatial_maps.gs"
 
 if [ -f "$GRADS_SCRIPT" ]; then
     $GRADS_CMD -blc "$GRADS_SCRIPT $DATA_DIR $OUTPUT_DIR $GRADS_DIR" 
+    SPATIAL_RC=$?
     
-    if [ $? -eq 0 ]; then
+    if [ $SPATIAL_RC -eq 0 ]; then
         echo "  ✓ Spatial maps created"
     else
         echo "  ✗ Failed to create spatial maps"
     fi
 else
     echo "  ✗ Script not found: $GRADS_SCRIPT"
+    SPATIAL_RC=1
 fi
 
 echo ""
 
-# 2. Temporal statistics
-echo "2. Computing temporal statistics..."
-GRADS_SCRIPT="${SCRIPT_DIR}/evaluate_temporal_stats.gs"
-
-if [ -f "$GRADS_SCRIPT" ]; then
-    $GRADS_CMD -blc "$GRADS_SCRIPT $DATA_DIR $OUTPUT_DIR $GRADS_DIR"
-    
-    if [ $? -eq 0 ]; then
-        echo "  ✓ Temporal statistics computed"
-    else
-        echo "  ✗ Failed to compute temporal statistics"
-    fi
-else
-    echo "  ✗ Script not found: $GRADS_SCRIPT"
-fi
-
-echo ""
-
-# 3. Difference-based evaluation (if ERA5 available)
+# 2. Difference-based evaluation (if ERA5 available)
 if [ "$HAS_ERA5" = true ]; then
-    echo "3. Computing difference-based evaluation..."
+    echo "2. Computing difference-based evaluation..."
     GRADS_SCRIPT="${SCRIPT_DIR}/evaluate_differences.gs"
     
     if [ -f "$GRADS_SCRIPT" ]; then
         $GRADS_CMD -blc "$GRADS_SCRIPT $DATA_DIR $OUTPUT_DIR $GRADS_DIR"
+        DIFF_RC=$?
         
-        if [ $? -eq 0 ]; then
+        if [ $DIFF_RC -eq 0 ]; then
             echo "  ✓ Difference-based evaluation completed"
         else
             echo "  ✗ Failed to compute difference-based evaluation"
         fi
     else
         echo "  ✗ Script not found: $GRADS_SCRIPT"
+        DIFF_RC=1
     fi
     
+    echo ""
+else
+    echo "2. Difference-based evaluation (skipped - no ERA5)"
     echo ""
 fi
 
@@ -183,12 +181,32 @@ fi
 ################################################################################
 
 echo "================================================================================"
-echo "GrADS Evaluation Complete"
+echo "Results"
 echo "================================================================================"
 echo ""
-echo "Output files:"
-ls -lh "$OUTPUT_DIR"/*.png 2>/dev/null || echo "  No PNG files found"
+
+if [ $SPATIAL_RC -eq 0 ]; then
+    echo "✓ Spatial maps:          SUCCESS"
+else
+    echo "✗ Spatial maps:          FAILED (rc=$SPATIAL_RC)"
+fi
+
+if [ "$HAS_ERA5" = true ]; then
+    if [ $DIFF_RC -eq 0 ]; then
+        echo "✓ Difference-based:      SUCCESS"
+    else
+        echo "✗ Difference-based:      FAILED (rc=$DIFF_RC)"
+    fi
+fi
+
 echo ""
+echo "Output files:"
+ls -lh "$OUTPUT_DIR"/*.png 2>/dev/null || echo "  No PNG files created (check GrADS Cairo/libimf.so issue)"
+
+echo ""
+echo "================================================================================"
+echo "Data directory:    $DATA_DIR"
+echo "Figures directory: $OUTPUT_DIR"
 echo "================================================================================"
 
 exit 0
